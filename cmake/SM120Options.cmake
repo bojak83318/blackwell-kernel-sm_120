@@ -1,0 +1,16 @@
+option(SM120_BUILD_TESTS "Build SM_120 unit and integration tests" ON)
+option(SM120_BUILD_BENCHMARKS "Build standalone benchmark harnesses" ON)
+option(SM120_ENABLE_VLLM_CHECKS "Enable vLLM-specific runtime guards" ON)
+option(SM120_ENABLE_TENSORRT_LLM "Include TensorRT-LLM helper scaffolding" OFF)
+
+if(SM120_BUILD_TESTS)
+  enable_testing()
+endif()
+
+function(sm120_print_build_options)
+  message(STATUS "SM_120 build options:")
+  message(STATUS "  Build tests: ${SM120_BUILD_TESTS}")
+  message(STATUS "  Build benchmarks: ${SM120_BUILD_BENCHMARKS}")
+  message(STATUS "  vLLM checks: ${SM120_ENABLE_VLLM_CHECKS}")
+  message(STATUS "  TensorRT-LLM helpers: ${SM120_ENABLE_TENSORRT_LLM}")
+endfunction()
