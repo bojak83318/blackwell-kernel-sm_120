@@ -16,7 +16,7 @@ endif()
 # PTX-only target for early SM120 validation without linking.
 add_custom_target(gdn_kernel_ptx
   COMMAND ${CMAKE_CUDA_COMPILER}
-    -arch=sm_120 -std=c++17 --use_fast_math -O3
+    -ptx -arch=sm_120 -std=c++17 --use_fast_math -O3
     -Xptxas -O3 --maxrregcount=64
     -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
     ${CMAKE_CUDA_FLAGS}
