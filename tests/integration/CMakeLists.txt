@@ -1,0 +1,4 @@
+add_executable(sm120_integration_tests main.cpp)
+
+add_test(NAME sm120_integration_tests COMMAND sm120_integration_tests)
+add_dependencies(sm120_tests sm120_integration_tests)

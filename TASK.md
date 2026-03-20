@@ -19,7 +19,8 @@ Implement and validate an SM_120-targeted GDN kernel for Qwen 3.5 style linear-a
 - [x] Confirm the source layout under `blackwell-kernel/sm_120/` and create the initial build/test skeleton.
 - [x] Define the CUDA/CUTLASS/PyTorch/vLLM/TensorRT-LLM version matrix required for SM_120 work.
 - [x] Add shared build configuration for CUDA extension builds and standalone kernel benchmarking.
-- [ ] Add a minimal test harness and evidence directory for benchmark and correctness outputs.
+- [x] Add a minimal test harness and evidence directory for benchmark and correctness outputs.
+- [x] Document the new test/benchmark README and run scripts so the placeholder harnesses can be exercised consistently.
 
 ## T1 CUTLASS Kernel Baseline
 - [ ] Add the initial GDN kernel scaffold targeting SM_120.
