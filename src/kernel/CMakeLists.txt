@@ -39,3 +39,21 @@ add_custom_target(tcgen05_probe_ptx
   DEPENDS tcgen05_probe.cu
   COMMENT "Probe tcgen05.mma.sp NVFP4 2:4 on SM120"
 )
+
+# Isolated tiled-style PTX probe for staged kernel bring-up.
+add_custom_target(gdn_tiled_ptx
+  COMMAND ${CMAKE_CUDA_COMPILER}
+    -ptx -arch=sm_120 -std=c++17 --use_fast_math -O3
+    -Xptxas -O3 --maxrregcount=64
+    -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
+    -o ${CMAKE_CURRENT_BINARY_DIR}/gdn_tiled_sm120.ptx
+    gdn_tiled_kernel.cu
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  DEPENDS gdn_tiled_kernel.cu
+  COMMENT "Tiled tcgen05 NVFP4 2:4 probe PTX on SM120"
+)
+
+if(DEFINED ENV{SM120_ENABLE_TCGEN05_PROBE})
+  add_custom_target(kernel_sm120_probe ALL)
+  add_dependencies(kernel_sm120_probe tcgen05_probe_ptx)
+endif()
