@@ -17,7 +17,7 @@ endif()
 add_custom_target(gdn_kernel_ptx
   COMMAND ${CMAKE_CUDA_COMPILER}
     -arch=sm_120 -std=c++17 --use_fast_math -O3
-    -Xptxas -O3 -Xptxas --spill-max-reg-count=64
+    -Xptxas -O3 --maxrregcount=64
     -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
     ${CMAKE_CUDA_FLAGS}
     -o ${CMAKE_CURRENT_BINARY_DIR}/gdn_kernel_sm120.ptx
