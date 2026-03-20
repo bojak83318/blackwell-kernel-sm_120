@@ -23,8 +23,8 @@ Implement and validate an SM_120-targeted GDN kernel for Qwen 3.5 style linear-a
 - [x] Document the new test/benchmark README and run scripts so the placeholder harnesses can be exercised consistently.
 
 ## T1 CUTLASS Kernel Baseline
-- [ ] Add the initial GDN kernel scaffold targeting SM_120.
-- [ ] Add host-side launch code and shape/config validation.
+- [x] Add the initial GDN kernel scaffold targeting SM_120.
+- [x] Add host-side launch code and shape/config validation.
 - [ ] Add a reference implementation path for correctness comparison.
 - [ ] Add focused unit tests for kernel numerics, shape handling, and failure cases.
 - [ ] Add a standalone microbenchmark and capture the first baseline throughput numbers.
