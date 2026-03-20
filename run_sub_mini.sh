@@ -3,14 +3,15 @@ set -euo pipefail
 
 # Wrapper to run bounded sub-mini passes against sm_120 TASK/implementation files.
 
-ROOT_DIR="/home/rocm/blackwell-kernel/sm_120"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${ROOT_DIR:-$SCRIPT_DIR}"
 MODEL="gpt-5.1-codex-mini"
 TASK_FILE="$ROOT_DIR/TASK.md"
 PLAN_FILE="$ROOT_DIR/implementation.md"
 SKIP_GIT_CHECK_FLAG="${SKIP_GIT_CHECK_FLAG:---skip-git-repo-check}"
 K3S_NODE_SSH="${K3S_NODE_SSH:-ubuntu@192.168.0.233}"
 K3S_NODE_NAME="${K3S_NODE_NAME:-kimi-k3s-node}"
-WORKTREE_ROOT="${WORKTREE_ROOT:-/home/rocm/blackwell-kernel/.worktrees/sm_120}"
+WORKTREE_ROOT="${WORKTREE_ROOT:-/home/rocm/workspace/blackwell-kernel-worktrees}"
 MULTI_AGENT_TARGET="${MULTI_AGENT_TARGET:-3}"
 
 if [[ ! -f "$TASK_FILE" || ! -f "$PLAN_FILE" ]]; then
@@ -20,15 +21,15 @@ fi
 
 SLICE="${1:-next}"
 MODE="${2:-run}" # run | dry-run
-EXTRA_ARGS=()
+EXTRA_INSTRUCTIONS=""
 
 if [[ $# -ge 2 ]]; then
   shift 2
-  EXTRA_ARGS=("$@")
+  EXTRA_INSTRUCTIONS="$*"
 fi
 
-if [[ ${#EXTRA_ARGS[@]} -gt 0 && "${EXTRA_ARGS[0]}" == "--" ]]; then
-  EXTRA_ARGS=("${EXTRA_ARGS[@]:1}")
+if [[ "${EXTRA_INSTRUCTIONS#-- }" != "$EXTRA_INSTRUCTIONS" ]]; then
+  EXTRA_INSTRUCTIONS="${EXTRA_INSTRUCTIONS#-- }"
 fi
 
 if [[ "$MODE" != "run" && "$MODE" != "dry-run" ]]; then
@@ -150,6 +151,9 @@ PROMPT
 }
 
 PROMPT_CONTENT="$(build_prompt "$SLICE")"
+if [[ -n "$EXTRA_INSTRUCTIONS" ]]; then
+  PROMPT_CONTENT="${PROMPT_CONTENT}"$'\n\n'"Operator override instructions:"$'\n'"- ${EXTRA_INSTRUCTIONS}"
+fi
 
 if [[ "$MODE" == "dry-run" ]]; then
   printf 'Slice: %s\nModel: %s\n\n' "$SLICE" "$MODEL"
@@ -163,4 +167,4 @@ if ! command -v codex >/dev/null 2>&1; then
 fi
 
 cd "$ROOT_DIR"
-exec codex exec "$SKIP_GIT_CHECK_FLAG" --full-auto --model "$MODEL" "${EXTRA_ARGS[@]}" "$PROMPT_CONTENT"
+exec codex exec "$SKIP_GIT_CHECK_FLAG" --full-auto --model "$MODEL" "$PROMPT_CONTENT"

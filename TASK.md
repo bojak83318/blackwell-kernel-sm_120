@@ -21,7 +21,7 @@ Implement and validate an SM_120-targeted GDN kernel for Qwen 3.5 style linear-a
 - [x] Add shared build configuration for CUDA extension builds and standalone kernel benchmarking.
 - [x] Add a minimal test harness and evidence directory for benchmark and correctness outputs.
 - [x] Document the new test/benchmark README and run scripts so the placeholder harnesses can be exercised consistently.
-
+- [x] Document environment assumptions plus local and remote command prerequisites (docs/p0-c-ops.md).
 ## T1 CUTLASS Kernel Baseline
 - [x] Add the initial GDN kernel scaffold targeting SM_120.
 - [x] Add host-side launch code and shape/config validation.
