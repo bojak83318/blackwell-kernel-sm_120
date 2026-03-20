@@ -26,3 +26,16 @@ add_custom_target(gdn_kernel_ptx
   DEPENDS gdn_kernel.cu
   COMMENT "Emit SM120 NVFP4 PTX"
 )
+
+# Isolated PTX probe for tcgen05 inline assembly on SM120.
+add_custom_target(tcgen05_probe_ptx
+  COMMAND ${CMAKE_CUDA_COMPILER}
+    -ptx -arch=sm_120 -std=c++17 --use_fast_math -O3
+    -Xptxas -O3 --maxrregcount=64
+    -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
+    -o ${CMAKE_CURRENT_BINARY_DIR}/tcgen05_probe_sm120.ptx
+    tcgen05_probe.cu
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  DEPENDS tcgen05_probe.cu
+  COMMENT "Probe tcgen05.mma.sp NVFP4 2:4 on SM120"
+)
