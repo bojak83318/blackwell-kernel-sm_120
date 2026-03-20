@@ -3,14 +3,15 @@ set -euo pipefail
 
 # Wrapper to run bounded sub-mini passes against sm_120 TASK/implementation files.
 
-ROOT_DIR="/home/rocm/blackwell-kernel/sm_120"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="${ROOT_DIR:-$SCRIPT_DIR}"
 MODEL="gpt-5.1-codex-mini"
 TASK_FILE="$ROOT_DIR/TASK.md"
 PLAN_FILE="$ROOT_DIR/implementation.md"
 SKIP_GIT_CHECK_FLAG="${SKIP_GIT_CHECK_FLAG:---skip-git-repo-check}"
 K3S_NODE_SSH="${K3S_NODE_SSH:-ubuntu@192.168.0.233}"
 K3S_NODE_NAME="${K3S_NODE_NAME:-kimi-k3s-node}"
-WORKTREE_ROOT="${WORKTREE_ROOT:-/home/rocm/blackwell-kernel/.worktrees/sm_120}"
+WORKTREE_ROOT="${WORKTREE_ROOT:-/home/rocm/workspace/blackwell-kernel-worktrees}"
 MULTI_AGENT_TARGET="${MULTI_AGENT_TARGET:-3}"
 
 if [[ ! -f "$TASK_FILE" || ! -f "$PLAN_FILE" ]]; then

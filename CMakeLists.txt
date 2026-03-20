@@ -18,3 +18,11 @@ file(MAKE_DIRECTORY ${SM120_BINARY_INCLUDE_DIR}/sm120)
 configure_file(include/sm120/config.h.in ${SM120_BINARY_INCLUDE_DIR}/sm120/config.h @ONLY)
 
 add_subdirectory(src)
+
+if(SM120_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
+
+if(SM120_BUILD_BENCHMARKS)
+  add_subdirectory(benchmarks)
+endif()
