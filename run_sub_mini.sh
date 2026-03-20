@@ -21,15 +21,15 @@ fi
 
 SLICE="${1:-next}"
 MODE="${2:-run}" # run | dry-run
-EXTRA_ARGS=()
+EXTRA_INSTRUCTIONS=""
 
 if [[ $# -ge 2 ]]; then
   shift 2
-  EXTRA_ARGS=("$@")
+  EXTRA_INSTRUCTIONS="$*"
 fi
 
-if [[ ${#EXTRA_ARGS[@]} -gt 0 && "${EXTRA_ARGS[0]}" == "--" ]]; then
-  EXTRA_ARGS=("${EXTRA_ARGS[@]:1}")
+if [[ "${EXTRA_INSTRUCTIONS#-- }" != "$EXTRA_INSTRUCTIONS" ]]; then
+  EXTRA_INSTRUCTIONS="${EXTRA_INSTRUCTIONS#-- }"
 fi
 
 if [[ "$MODE" != "run" && "$MODE" != "dry-run" ]]; then
@@ -151,6 +151,9 @@ PROMPT
 }
 
 PROMPT_CONTENT="$(build_prompt "$SLICE")"
+if [[ -n "$EXTRA_INSTRUCTIONS" ]]; then
+  PROMPT_CONTENT="${PROMPT_CONTENT}"$'\n\n'"Operator override instructions:"$'\n'"- ${EXTRA_INSTRUCTIONS}"
+fi
 
 if [[ "$MODE" == "dry-run" ]]; then
   printf 'Slice: %s\nModel: %s\n\n' "$SLICE" "$MODEL"
@@ -164,4 +167,4 @@ if ! command -v codex >/dev/null 2>&1; then
 fi
 
 cd "$ROOT_DIR"
-exec codex exec "$SKIP_GIT_CHECK_FLAG" --full-auto --model "$MODEL" "${EXTRA_ARGS[@]}" "$PROMPT_CONTENT"
+exec codex exec "$SKIP_GIT_CHECK_FLAG" --full-auto --model "$MODEL" "$PROMPT_CONTENT"
