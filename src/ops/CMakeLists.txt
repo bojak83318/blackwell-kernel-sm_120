@@ -3,7 +3,7 @@
 enable_language(CUDA)
 
 # ── find torch ────────────────────────────────────────────────────────────────
-find_package(Python3 REQUIRED COMPONENTS Interpreter)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development)
 
 execute_process(
     COMMAND ${Python3_EXECUTABLE} -c
@@ -34,7 +34,6 @@ set_target_properties(gdn_sm120_op PROPERTIES
 
 target_compile_options(gdn_sm120_op PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:
-        -gencode=arch=compute_120f,code=sm_120
         --expt-relaxed-constexpr
         --extended-lambda
         -O3
@@ -51,9 +50,11 @@ target_include_directories(gdn_sm120_op PRIVATE
     ${PROJECT_SOURCE_DIR}/src/intrinsics
     ${PROJECT_SOURCE_DIR}/src/kernel
     ${TORCH_INCLUDE_DIRS}
+    ${Python3_INCLUDE_DIRS}
 )
 
-# suppress torch ABI warnings
-target_compile_definitions(gdn_sm120_op PRIVATE
-    -D_GLIBCXX_USE_CXX11_ABI=${TORCH_CXX_FLAGS}
-)
+# Honor torch-provided compile flags (includes ABI macro when needed).
+if(TORCH_CXX_FLAGS)
+    separate_arguments(TORCH_CXX_FLAG_LIST UNIX_COMMAND "${TORCH_CXX_FLAGS}")
+    target_compile_options(gdn_sm120_op PRIVATE ${TORCH_CXX_FLAG_LIST})
+endif()
