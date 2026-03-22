@@ -5,5 +5,6 @@ set(SM120_RUNTIME_SOURCES
 
 add_library(sm120_runtime STATIC ${SM120_RUNTIME_SOURCES})
 target_include_directories(sm120_runtime PUBLIC ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(sm120_runtime PUBLIC sm120_intrinsics)
 target_compile_features(sm120_runtime PUBLIC cxx_std_20)
 add_library(sm120_runtime_alias ALIAS sm120_runtime)

@@ -8,6 +8,7 @@ target_include_directories(sm120_config INTERFACE
   ${SM120_BINARY_INCLUDE_DIR}
 )
 
+add_subdirectory(intrinsics)
 add_subdirectory(kernel)
 add_subdirectory(runtime)
 add_subdirectory(pytorch)

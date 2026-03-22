@@ -5,7 +5,7 @@ target_include_directories(sm120_kernel PUBLIC
   ${CMAKE_SOURCE_DIR}/include
   ${SM120_BINARY_INCLUDE_DIR}
   ${CMAKE_CURRENT_SOURCE_DIR})
-target_link_libraries(sm120_kernel PUBLIC sm120_config)
+target_link_libraries(sm120_kernel PUBLIC sm120_intrinsics sm120_config)
 set(SM120_NVCC_CODEGEN_ARCH "arch=${SM120_COMPUTE_TARGET},code=${SM120_TARGET_ARCH}")
 set(SM120_NVCC_GENCODE_FLAG "-gencode=${SM120_NVCC_CODEGEN_ARCH}")
 
