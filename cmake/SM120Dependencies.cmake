@@ -3,7 +3,8 @@ set(SM120_CUTLASS_VERSION "3.0" CACHE STRING "Pinned CUTLASS version for the SM_
 set(SM120_TORCH_VERSION "2.2" CACHE STRING "Target PyTorch minor version for the extension")
 set(SM120_VLLM_VERSION "1.0" CACHE STRING "Minimum vLLM version expected for integration")
 set(SM120_TENSORRT_VERSION "9.2" CACHE STRING "Expected TensorRT version for TRT-LLM plugin work")
-set(SM120_TARGET_ARCH "sm_120" CACHE STRING "CUDA architecture / compute capability for the custom kernel")
+set(SM120_TARGET_ARCH "sm_120f" CACHE STRING "CUDA GPU code target for the custom kernel (e.g., sm_120f)")
+set(SM120_COMPUTE_TARGET "compute_120f" CACHE STRING "CUDA compute architecture used during compilation (nvcc --gpu-architecture)")
 
 set(SM120_DEPENDENCY_MATRIX
   CUDA ${SM120_CUDA_VERSION}
