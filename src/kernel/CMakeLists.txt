@@ -9,7 +9,7 @@ target_include_directories(sm120_kernel PUBLIC
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(sm120_kernel PUBLIC sm120_intrinsics sm120_config)
 set(SM120_NVCC_GENCODE_FLAGS
-  -gencode=arch=compute_120f,code=sm_120f
+  -gencode=arch=compute_120f,code=sm_120
 )
 
 set_target_properties(sm120_kernel PROPERTIES
@@ -18,13 +18,17 @@ set_target_properties(sm120_kernel PROPERTIES
   CUDA_STANDARD_REQUIRED YES
 )
 target_compile_options(sm120_kernel PRIVATE
-  $<$<COMPILE_LANGUAGE:CUDA>:${SM120_NVCC_GENCODE_FLAGS}>
+  $<$<COMPILE_LANGUAGE:CUDA>:${SM120_NVCC_GENCODE_FLAGS}
+          --expt-relaxed-constexpr
+          --extended-lambda>
 )
 
 # PTX-only target for early SM120 validation without linking.
 add_custom_target(gdn_kernel_ptx
   COMMAND ${CMAKE_CUDA_COMPILER}
-    -ptx ${SM120_NVCC_GENCODE_FLAGS} -std=c++17 --use_fast_math -O3
+    -ptx ${SM120_NVCC_GENCODE_FLAGS}
+          --expt-relaxed-constexpr
+          --extended-lambda -std=c++17 --use_fast_math -O3
     -Xptxas -O3 --maxrregcount=64
     -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
     ${CMAKE_CUDA_FLAGS}
@@ -38,7 +42,9 @@ add_custom_target(gdn_kernel_ptx
 # Isolated PTX probe for tcgen05 inline assembly on SM120.
 add_custom_target(tcgen05_probe_ptx
   COMMAND ${CMAKE_CUDA_COMPILER}
-    -ptx ${SM120_NVCC_GENCODE_FLAGS} -std=c++17 --use_fast_math -O3
+    -ptx ${SM120_NVCC_GENCODE_FLAGS}
+          --expt-relaxed-constexpr
+          --extended-lambda -std=c++17 --use_fast_math -O3
     -Xptxas -O3 --maxrregcount=64
     -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
     -o ${CMAKE_CURRENT_BINARY_DIR}/tcgen05_probe_sm120.ptx
@@ -51,7 +57,9 @@ add_custom_target(tcgen05_probe_ptx
 # Isolated tiled-style PTX probe for staged kernel bring-up.
 add_custom_target(gdn_tiled_ptx
   COMMAND ${CMAKE_CUDA_COMPILER}
-    -ptx ${SM120_NVCC_GENCODE_FLAGS} -std=c++17 --use_fast_math -O3
+    -ptx ${SM120_NVCC_GENCODE_FLAGS}
+          --expt-relaxed-constexpr
+          --extended-lambda -std=c++17 --use_fast_math -O3
     -Xptxas -O3 --maxrregcount=64
     -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
     -o ${CMAKE_CURRENT_BINARY_DIR}/gdn_tiled_sm120.ptx
@@ -63,7 +71,9 @@ add_custom_target(gdn_tiled_ptx
 
 add_custom_target(gdn_state_update_ptx
   COMMAND ${CMAKE_CUDA_COMPILER}
-    -ptx ${SM120_NVCC_GENCODE_FLAGS} -std=c++17 --use_fast_math -O3
+    -ptx ${SM120_NVCC_GENCODE_FLAGS}
+          --expt-relaxed-constexpr
+          --extended-lambda -std=c++17 --use_fast_math -O3
     -Xptxas -O3 --maxrregcount=64
     -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
     -o ${CMAKE_CURRENT_BINARY_DIR}/gdn_state_update_sm120.ptx

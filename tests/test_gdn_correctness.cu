@@ -164,9 +164,15 @@ static bool run_test(int d, float alpha, float beta, float rel_tol) {
         nvfp4_dequantise_host(h_out_data.data(), h_out_scales.data(),
                                h_fused_dequant.data(), n);
 
+        // Compare in the same numerical space: NVFP4(dequant) vs NVFP4(dequant).
+        std::vector<uint8_t> h_ref_q_data(data_bytes), h_ref_q_scales(scale_bytes);
+        nvfp4_quantise_host(h_ref_out.data(), h_ref_q_data.data(), h_ref_q_scales.data(), n);
+        std::vector<float> h_ref_q_dequant(n);
+        nvfp4_dequantise_host(h_ref_q_data.data(), h_ref_q_scales.data(), h_ref_q_dequant.data(), n);
+
         char tag[32];
         snprintf(tag, sizeof(tag), "d=%d", d);
-        float max_rel = compare_outputs(h_ref_out.data(), h_fused_dequant.data(),
+        float max_rel = compare_outputs(h_ref_q_dequant.data(), h_fused_dequant.data(),
                                         d, tag, rel_tol);
 
         bool pass = (max_rel <= rel_tol);

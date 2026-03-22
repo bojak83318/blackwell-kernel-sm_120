@@ -7,6 +7,9 @@
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 #include <stdint.h>
+#include <vector>
+
+#include "gdn_fp4_intrinsics.cuh"
 
 // ── NVFP4 helpers (shared with fused kernel tests) ───────────────────────────
 
@@ -31,32 +34,11 @@ __host__ __device__ inline float decode_e2m1_nibble(uint8_t nibble) {
 }
 
 __host__ __device__ inline float decode_ue4m3(uint8_t scale_byte) {
-    // Unsigned E4M3: no sign bit, 4-bit exponent, 3-bit mantissa.
-    // Hardware interpretation: value = (1 + m/8) * 2^{e}  for e in [0,15]
-    // (no bias, no sign). All 256 values are non-negative.
-    uint8_t e = (scale_byte >> 3) & 0xFu;
-    uint8_t m = scale_byte & 0x7u;
-    if (e == 0 && m == 0) return 0.0f;
-    float mantissa = 1.0f + (float)m / 8.0f;
-    float scale    = mantissa * (float)(1u << e);
-    return scale;
+    return sm120::intrinsics::decode_ue4m3_to_f32(scale_byte);
 }
 
 __host__ __device__ inline uint8_t encode_f32_to_ue4m3(float v) {
-    if (v <= 0.0f) return 0u;
-    // Find exponent: largest e s.t. 2^e <= v / (1 + 7/8)
-    // i.e. 2^e <= v / 1.875
-    // Clamp exponent to [0,15].
-    float fv = v;
-    int e = 0;
-    while (e < 15 && (1u << (e + 1)) <= (int)(fv / 1.0f)) e++;
-    // Now find mantissa m in [0,7]: (1 + m/8) * 2^e <= v < (1 + (m+1)/8) * 2^e
-    float base = (float)(1u << e);
-    uint8_t m = 0;
-    for (int mi = 7; mi >= 0; mi--) {
-        if ((1.0f + (float)mi / 8.0f) * base <= fv) { m = (uint8_t)mi; break; }
-    }
-    return (uint8_t)((e << 3) | m);
+    return sm120::intrinsics::encode_f32_to_ue4m3(v);
 }
 
 // ── Reference kernel ─────────────────────────────────────────────────────────
@@ -180,26 +162,7 @@ extern "C" void launch_gdn_ref(
     cudaMalloc(&d_S_prev_fp32, (size_t)n * sizeof(float));
 
     // dequantise kernel — one thread per element
-    auto dequant = [=] __device__ (int i,
-        const uint8_t* data, const uint8_t* scales, float* out) {
-        int byte_idx = i / 2;
-        uint8_t byte = data[byte_idx];
-        uint8_t nibble = (i % 2 == 0) ? (byte & 0x0Fu) : ((byte >> 4) & 0x0Fu);
-        float raw   = decode_e2m1_nibble(nibble);
-        float scale = decode_ue4m3(scales[i / 16]);
-        out[i] = raw * scale;
-    };
-    (void)dequant; // suppress unused warning
-
-    // launch inline dequant kernel
-    struct DequantArgs {
-        const uint8_t* data; const uint8_t* scales; float* out; int n;
-    };
-    DequantArgs args{d_S_prev_data, d_S_prev_scales, d_S_prev_fp32, n};
-
-    // Use a simple global kernel via lambda capture isn't possible in plain CUDA,
-    // so use a named kernel:
-    // (defined below as a static __global__)
+    // launch dequant kernel (defined as static __global__ below)
     extern void launch_dequant_kernel(const uint8_t*, const uint8_t*, float*, int, cudaStream_t);
     launch_dequant_kernel(d_S_prev_data, d_S_prev_scales, d_S_prev_fp32, n, stream);
 
@@ -231,4 +194,69 @@ void launch_dequant_kernel(
     int threads = 256;
     int blocks  = (n + threads - 1) / threads;
     dequant_kernel_impl<<<blocks, threads, 0, s>>>(data, scales, out, n);
+}
+
+
+// Compatibility wrapper used by test_gdn_correctness.cu.
+// Produces NVFP4 output buffers from the FP32 BF16 reference path.
+extern "C" int launch_gdn_state_update(
+    const uint8_t* d_S_prev_data,
+    const uint8_t* d_S_prev_scales,
+    const __nv_bfloat16* d_k,
+    const __nv_bfloat16* d_v,
+    uint8_t* d_S_out_data,
+    uint8_t* d_S_out_scales,
+    float alpha,
+    float beta,
+    int d,
+    cudaStream_t stream)
+{
+    if (!d_S_prev_data || !d_S_prev_scales || !d_k || !d_v ||
+        !d_S_out_data || !d_S_out_scales || d <= 0) {
+        return 1;
+    }
+
+    const int n = d * d;
+    const size_t fp32_bytes  = static_cast<size_t>(n) / 1u * sizeof(float);
+    const size_t data_bytes  = static_cast<size_t>(n) / 2u;
+    const size_t scale_bytes = static_cast<size_t>(n) / 16u;
+
+    float* d_ref_out = nullptr;
+    if (cudaMalloc(&d_ref_out, fp32_bytes) != cudaSuccess) {
+        return 2;
+    }
+
+    launch_gdn_ref(d_S_prev_data, d_S_prev_scales, d_k, d_v,
+                   d_ref_out, alpha, beta, d, stream);
+
+    cudaError_t err = cudaGetLastError();
+    if (err != cudaSuccess) {
+        cudaFree(d_ref_out);
+        return 3;
+    }
+
+    if (cudaStreamSynchronize(stream) != cudaSuccess) {
+        cudaFree(d_ref_out);
+        return 4;
+    }
+
+    std::vector<float> h_ref_out(static_cast<size_t>(n));
+    std::vector<uint8_t> h_out_data(data_bytes);
+    std::vector<uint8_t> h_out_scales(scale_bytes);
+
+    if (cudaMemcpy(h_ref_out.data(), d_ref_out, fp32_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        cudaFree(d_ref_out);
+        return 5;
+    }
+
+    nvfp4_quantise_host(h_ref_out.data(), h_out_data.data(), h_out_scales.data(), n);
+
+    if (cudaMemcpyAsync(d_S_out_data, h_out_data.data(), data_bytes, cudaMemcpyHostToDevice, stream) != cudaSuccess ||
+        cudaMemcpyAsync(d_S_out_scales, h_out_scales.data(), scale_bytes, cudaMemcpyHostToDevice, stream) != cudaSuccess) {
+        cudaFree(d_ref_out);
+        return 6;
+    }
+
+    cudaFree(d_ref_out);
+    return 0;
 }

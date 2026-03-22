@@ -1,5 +1,7 @@
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda-12.9/bin/nvcc")
 cmake_minimum_required(VERSION 3.25)
-project(sm_120_gdn VERSION 0.1 LANGUAGES C CXX)
+project(sm_120_gdn VERSION 0.1 LANGUAGES C CXX CUDA)
+set(CMAKE_CUDA_ARCHITECTURES OFF)
 
 include(GNUInstallDirs)
 include(cmake/SM120Options.cmake)
