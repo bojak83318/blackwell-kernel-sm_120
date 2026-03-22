@@ -39,6 +39,12 @@
    - Use `ssh` to copy any generated artifacts back to the main workspace if further analysis is required, but prefer to store logs under `artifacts/remote/` within the repo tree.
    - When running `kubectl` workflows (e.g., applying a job or checking cluster logs), keep the commands idempotent and note any generated manifests in `docs/` for future reference.
 
+## Milestone harness targets & artifacts
+
+- **M1 test harness** – The correctness milestone focuses on the `sm120_test_harness` target declared in `tests/CMakeLists.txt`. The convenience script `./tests/run_tests.sh` configures the tree with `-DSM120_BUILD_TESTS=ON`, builds the aggregate target, runs `ctest`, and writes `ctest.log` into `artifacts/m1/tests`. Keep M1 evidence (unit + integration pass reports, diff comparisons, etc.) inside that directory; its `README.md` explains how to append new artifacts without confusing later phases.
+- **M2 benchmark harness** – The performance milestone centers on the `sm120_benchmark_harness` target defined in `benchmarks/CMakeLists.txt`. Running `./benchmarks/run_benchmarks.sh` (itself invoking `cmake --build ... --target sm120_benchmark_harness`) produces `benchmarks.log` under `artifacts/m2/benchmarks` and uses the same path as the `SM120_BENCHMARK_EVIDENCE_DIR` variable for future kernel plumbing. Record throughput traces, `nvprof` output, or compiled kernel metadata in that directory so M2 reviewers can find them without digging through build caches.
+- **Verifying harness commands** – Treat these scripts as the canonical way to drive each harness. After tweaks to the tooling, rerun `./tests/run_tests.sh ./build/tests ./artifacts/m1/tests` and `./benchmarks/run_benchmarks.sh ./build/benchmarks ./artifacts/m2/benchmarks` to confirm the targets still configure, build, and log correctly. Capture the exact command line in `docs/` or under `artifacts/m1/tests/commands.log` (and the M2 equivalent) to document what “working harness” looked like when this phase was closed.
+
 ## Command & environment coordination notes
 - Always capture the exact commands executed (including arguments) in `docs/` or `artifacts/` so the next phase can reproduce the preflight steps.
 - Align any new environment variables (e.g., `CUDA_HOME`, `TORCH_CUDA_ARCH_LIST`) with both local and dockerized runs; mention them in this doc before introducing them elsewhere.

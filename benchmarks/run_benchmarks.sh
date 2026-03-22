@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}/.."
 BUILD_DIR="${1:-${REPO_ROOT}/build/benchmarks}"
-EVIDENCE_DIR="${2:-${REPO_ROOT}/artifacts/benchmarks}"
+EVIDENCE_DIR="${2:-${REPO_ROOT}/artifacts/m2/benchmarks}"
 BENCH_ARGS=()
 if [[ "$#" -gt 2 ]]; then
   BENCH_ARGS=("${@:3}")

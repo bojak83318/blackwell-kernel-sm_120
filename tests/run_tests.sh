@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}/.."
 BUILD_DIR="${1:-${REPO_ROOT}/build/tests}"
-TEST_OUTPUT="${2:-${REPO_ROOT}/artifacts/tests}"
+TEST_OUTPUT="${2:-${REPO_ROOT}/artifacts/m1/tests}"
 
 mkdir -p "${BUILD_DIR}" "${TEST_OUTPUT}"
 

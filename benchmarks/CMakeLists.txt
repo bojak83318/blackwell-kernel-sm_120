@@ -1,6 +1,6 @@
 add_executable(sm120_benchmark_main benchmark_main.cpp)
 
-set(SM120_BENCHMARK_EVIDENCE_DIR "${CMAKE_BINARY_DIR}/artifacts/benchmarks" CACHE PATH "Directory for benchmark logs")
+set(SM120_BENCHMARK_EVIDENCE_DIR "${CMAKE_SOURCE_DIR}/artifacts/m2/benchmarks" CACHE PATH "Directory for benchmark logs")
 file(MAKE_DIRECTORY ${SM120_BENCHMARK_EVIDENCE_DIR})
 
 add_custom_target(sm120_benchmarks
