@@ -13,7 +13,7 @@
 2. **Build/test entry points**
    - After configuration, invoke `cmake --build build --target <target>` (e.g., `sm120-bootstrap`, `sm120-tests`) or run `ninja -C build` directly. Keep `build/bin` on the PATH for subsequent commands, or call targets through `cmake --build` each time.
 3. **Python dependency validation**
-   - Confirm `python -m pip show torch vllm` (or install the pinned versions) before executing Python scripts under `python/` or `scripts/`. Set `PYTHON_EXECUTABLE` in CMake if the interpreter differs from the default on the system.
+   - Confirm `python -m pip show torch` (should report `2.9.1+cu128`) and `python -m pip show vllm` (≥ 0.12)—see `PRD_GDN_Kernel.md` for the pinned versions—before executing Python scripts under `python/` or `scripts/`. Set `PYTHON_EXECUTABLE` in CMake if the interpreter differs from the default on the system.
 4. **Documentation / evidence captures**
    - Use `docs/environment.md` as the source of truth for dependency versions. Link any new tooling requirements back to that file when adding CMake config.
 
