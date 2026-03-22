@@ -4,7 +4,7 @@
 
 #include <cuda_runtime.h>
 
-#include "sm120/intrinsics/gdn_fp4_intrinsics.cuh"
+#include "gdn_fp4_intrinsics.cuh"
 
 namespace sm120 {
 namespace kernel {
