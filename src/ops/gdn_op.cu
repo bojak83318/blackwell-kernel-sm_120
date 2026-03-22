@@ -1,121 +1,110 @@
-#include <ATen/ATen.h>
-#include <ATen/cuda/CUDAContext.h>
+// gdn_op.cu
+// PyTorch custom op wrapper for the SM_120 GDN state-update kernel.
+// Registers: torch.ops.gdn_sm120.state_update
+//
+// Signature (Python):
+//   S_out_data, S_out_scales = torch.ops.gdn_sm120.state_update(
+//       S_data, S_scales, k, v, alpha, beta, d)
+//
+// Inputs:
+//   S_data   : torch.Tensor uint8, shape [(d*d)//2]   — packed E2M1
+//   S_scales : torch.Tensor uint8, shape [(d*d)//16]  — UE4M3 block scales
+//   k        : torch.Tensor bfloat16, shape [d]
+//   v        : torch.Tensor bfloat16, shape [d]
+//   alpha    : float — decay gate
+//   beta     : float — update scale
+//   d        : int   — state dimension
+//
+// Outputs:
+//   S_out_data   : torch.Tensor uint8, shape [(d*d)//2]
+//   S_out_scales : torch.Tensor uint8, shape [(d*d)//16]
+
+#include <torch/library.h>
 #include <torch/extension.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <cuda_bf16.h>
+#include <cuda_runtime.h>
+#include <stdint.h>
+#include <stdexcept>
+#include <string>
 
-#include <cuda_runtime_api.h>
+// Forward declaration — implemented in gdn_state_update.cu
+extern "C" int launch_gdn_state_update(
+    const uint8_t* d_S_data,
+    const uint8_t* d_S_scales,
+    const __nv_bfloat16* d_k,
+    const __nv_bfloat16* d_v,
+    uint8_t* d_S_out_data,
+    uint8_t* d_S_out_scales,
+    float alpha, float beta, int d,
+    cudaStream_t stream);
 
-#include <cstdint>
-#include <limits>
+// ── op implementation ─────────────────────────────────────────────────────────
 
-#include "sm120/kernel/gdn_kernel.hpp"
-#include "sm120/runtime/parameter_validation.h"
+std::tuple<at::Tensor, at::Tensor> gdn_state_update_op(
+    const at::Tensor& S_data,
+    const at::Tensor& S_scales,
+    const at::Tensor& k,
+    const at::Tensor& v,
+    double alpha,
+    double beta,
+    int64_t d)
+{
+    // ── input validation ──────────────────────────────────────────────────────
+    TORCH_CHECK(S_data.is_cuda(),   "S_data must be a CUDA tensor");
+    TORCH_CHECK(S_scales.is_cuda(), "S_scales must be a CUDA tensor");
+    TORCH_CHECK(k.is_cuda(),        "k must be a CUDA tensor");
+    TORCH_CHECK(v.is_cuda(),        "v must be a CUDA tensor");
 
-namespace {
+    TORCH_CHECK(S_data.dtype()   == torch::kUInt8,    "S_data must be uint8");
+    TORCH_CHECK(S_scales.dtype() == torch::kUInt8,    "S_scales must be uint8");
+    TORCH_CHECK(k.dtype()        == torch::kBFloat16, "k must be bfloat16");
+    TORCH_CHECK(v.dtype()        == torch::kBFloat16, "v must be bfloat16");
 
-constexpr int64_t kExpectedSequenceLength = 1;
+    TORCH_CHECK(S_data.is_contiguous(),   "S_data must be contiguous");
+    TORCH_CHECK(S_scales.is_contiguous(), "S_scales must be contiguous");
+    TORCH_CHECK(k.is_contiguous(),        "k must be contiguous");
+    TORCH_CHECK(v.is_contiguous(),        "v must be contiguous");
 
-int32_t to_int32_checked(int64_t value, const char* label) {
-  TORCH_CHECK(value >= std::numeric_limits<int32_t>::min() &&
-              value <= std::numeric_limits<int32_t>::max(),
-              "SM_120 GDN: ", label, " must fit in int32");
-  return static_cast<int32_t>(value);
+    int64_t n = d * d;
+    TORCH_CHECK(S_data.numel()   == n / 2,  "S_data size mismatch: expected ", n/2, " got ", S_data.numel());
+    TORCH_CHECK(S_scales.numel() == n / 16, "S_scales size mismatch");
+    TORCH_CHECK(k.numel() == d, "k size mismatch");
+    TORCH_CHECK(v.numel() == d, "v size mismatch");
+    TORCH_CHECK(n % 16 == 0, "d*d must be divisible by 16 for NVFP4 block scaling");
+
+    // ── allocate outputs ──────────────────────────────────────────────────────
+    auto opts = torch::TensorOptions().dtype(torch::kUInt8).device(S_data.device());
+    at::Tensor S_out_data   = torch::empty({n / 2},  opts);
+    at::Tensor S_out_scales = torch::empty({n / 16}, opts);
+
+    // ── launch kernel ─────────────────────────────────────────────────────────
+    cudaStream_t stream = at::cuda::getCurrentCUDAStream();
+
+    int rc = launch_gdn_state_update(
+        reinterpret_cast<const uint8_t*>(S_data.data_ptr()),
+        reinterpret_cast<const uint8_t*>(S_scales.data_ptr()),
+        reinterpret_cast<const __nv_bfloat16*>(k.data_ptr()),
+        reinterpret_cast<const __nv_bfloat16*>(v.data_ptr()),
+        reinterpret_cast<uint8_t*>(S_out_data.data_ptr()),
+        reinterpret_cast<uint8_t*>(S_out_scales.data_ptr()),
+        static_cast<float>(alpha),
+        static_cast<float>(beta),
+        static_cast<int>(d),
+        stream);
+
+    TORCH_CHECK(rc == 0, "launch_gdn_state_update failed with code ", rc);
+
+    return {S_out_data, S_out_scales};
 }
 
-sm120::runtime::DataType infer_data_type(at::ScalarType scalar_type) {
-  switch (scalar_type) {
-    case at::ScalarType::Half:
-      return sm120::runtime::DataType::Float16;
-    case at::ScalarType::Float:
-      return sm120::runtime::DataType::Float32;
-    default:
-      TORCH_CHECK(false, "SM_120 GDN: unsupported dtype");
-  }
+// ── registration ──────────────────────────────────────────────────────────────
+
+TORCH_LIBRARY(gdn_sm120, m) {
+    m.def("state_update(Tensor S_data, Tensor S_scales, Tensor k, Tensor v, "
+          "float alpha, float beta, int d) -> (Tensor, Tensor)");
 }
 
-void validate_tensors(const at::Tensor& queries,
-                      const at::Tensor& values,
-                      const at::Tensor& output) {
-  TORCH_CHECK(queries.is_cuda(), "SM_120 GDN: queries must be CUDA tensors");
-  TORCH_CHECK(values.is_cuda(), "SM_120 GDN: values must be CUDA tensors");
-  TORCH_CHECK(output.is_cuda(), "SM_120 GDN: output must be a CUDA tensor");
-
-  TORCH_CHECK(queries.dim() == 4, "SM_120 GDN: queries must be 4D");
-  TORCH_CHECK(values.dim() == 4, "SM_120 GDN: values must be 4D");
-  TORCH_CHECK(output.dim() == 4, "SM_120 GDN: output must be 4D");
-
-  TORCH_CHECK(queries.device() == values.device(), "SM_120 GDN: queries and values must share the same device");
-  TORCH_CHECK(queries.device() == output.device(), "SM_120 GDN: queries and output must share the same device");
-
-  TORCH_CHECK(queries.scalar_type() == values.scalar_type(), "SM_120 GDN: queries and values must share the same dtype");
-  TORCH_CHECK(queries.scalar_type() == output.scalar_type(), "SM_120 GDN: queries and output must share the same dtype");
-
-  TORCH_CHECK(queries.is_contiguous(), "SM_120 GDN: queries must be contiguous");
-  TORCH_CHECK(values.is_contiguous(), "SM_120 GDN: values must be contiguous");
-  TORCH_CHECK(output.is_contiguous(), "SM_120 GDN: output must be contiguous");
-
-  const int64_t batch = queries.size(0);
-  const int64_t sequence_length = queries.size(1);
-  const int64_t head_count = queries.size(2);
-  const int64_t hidden_size = queries.size(3);
-
-  TORCH_CHECK(batch > 0, "SM_120 GDN: batch must be > 0");
-  TORCH_CHECK(sequence_length == kExpectedSequenceLength,
-              "SM_120 GDN: only sequence_length=1 is supported");
-  TORCH_CHECK(head_count > 0, "SM_120 GDN: head_count must be > 0");
-  TORCH_CHECK(hidden_size > 0, "SM_120 GDN: hidden_size must be > 0");
-  TORCH_CHECK(hidden_size % sm120::runtime::kHiddenAlign == 0,
-              "SM_120 GDN: hidden_size must be a multiple of ", sm120::runtime::kHiddenAlign);
-
-  TORCH_CHECK(values.size(0) == batch, "SM_120 GDN: values batch dimension mismatch");
-  TORCH_CHECK(values.size(1) == sequence_length, "SM_120 GDN: values sequence_length mismatch");
-  TORCH_CHECK(values.size(2) == head_count, "SM_120 GDN: values head_count mismatch");
-
-  const int64_t state_size = values.size(3);
-  TORCH_CHECK(state_size > 0, "SM_120 GDN: state_size must be > 0");
-  TORCH_CHECK(state_size % hidden_size == 0,
-              "SM_120 GDN: state_size must be divisible by hidden_size");
-
-  TORCH_CHECK(output.size(0) == batch, "SM_120 GDN: output batch dimension mismatch");
-  TORCH_CHECK(output.size(1) == head_count, "SM_120 GDN: output head_count mismatch");
-  TORCH_CHECK(output.size(2) == hidden_size, "SM_120 GDN: output hidden_size mismatch");
-  TORCH_CHECK(output.size(3) == state_size, "SM_120 GDN: output state_size mismatch");
-}
-
-} // namespace
-
-at::Tensor gdn_cuda_impl(const at::Tensor& queries,
-                         const at::Tensor& values,
-                         at::Tensor& output) {
-  validate_tensors(queries, values, output);
-
-  const int64_t batch = queries.size(0);
-  const int64_t sequence_length = queries.size(1);
-  const int64_t head_count = queries.size(2);
-  const int64_t hidden_size = queries.size(3);
-  const int64_t state_size = values.size(3);
-
-  sm120::kernel::GdnLaunchParams params;
-  params.queries = queries.data_ptr();
-  params.values = values.data_ptr();
-  params.output = output.data_ptr();
-  params.batch = to_int32_checked(batch, "batch");
-  params.sequence_length = to_int32_checked(sequence_length, "sequence_length");
-  params.head_count = to_int32_checked(head_count, "head_count");
-  params.hidden_size = to_int32_checked(hidden_size, "hidden_size");
-  params.state_size = to_int32_checked(state_size, "state_size");
-  params.dtype = infer_data_type(queries.scalar_type());
-
-  const auto stream = at::cuda::getCurrentCUDAStream();
-  const auto err = sm120::kernel::launch_kernel(params, stream);
-  TORCH_CHECK(err == cudaSuccess,
-              "SM_120 GDN: kernel launch failed: ", cudaGetErrorString(err));
-  return output;
-}
-
-TORCH_LIBRARY(sm120, m) {
-  m.def("gdn(Tensor queries, Tensor values, Tensor output) -> Tensor");
-}
-
-TORCH_LIBRARY_IMPL(sm120, CUDA, m) {
-  m.impl("gdn", gdn_cuda_impl);
+TORCH_LIBRARY_IMPL(gdn_sm120, CUDA, m) {
+    m.impl("state_update", &gdn_state_update_op);
 }

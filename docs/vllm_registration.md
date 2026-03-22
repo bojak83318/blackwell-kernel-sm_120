@@ -1,74 +1,79 @@
-# vLLM SM_120 Registration Recipe
+# GDN SM_120 Op — vLLM Registration Guide
 
-Use this recipe to connect the SM_120 GDN kernel into vLLM once the PyTorch extension and custom op are available.
+## Overview
 
-## 1. Build the SM_120 extension
+`libgdn_sm120_op.so` exposes the fused GDN state-update kernel as a PyTorch
+custom op: `torch.ops.gdn_sm120.state_update`. It can be loaded into any
+PyTorch or vLLM process without modifying framework source.
 
-The first build step is already covered by the shared `cmake` configuration. The goal is to produce a library that exposes `torch.ops.sm120`. Typical commands:
+## Build
 
-```sh
+```bash
+export CUDA_HOME=/usr/local/cuda-12.9
+export PATH="$CUDA_HOME/bin:$PATH"
+
 cmake -S . -B build/m4 \
-      -DSM120_BUILD_TESTS=ON \
-      -DSM120_ENABLE_VLLM_CHECKS=ON \
-      -DSM120_BUILD_BENCHMARKS=OFF
-cmake --build build/m4 --target sm120_kernel
+  -DCMAKE_BUILD_TYPE=Release \
+  -DSM120_BUILD_TESTS=OFF \
+  -DSM120_BUILD_OPS=ON \
+  -DCMAKE_CUDA_COMPILER=$CUDA_HOME/bin/nvcc
+
+cmake --build build/m4 --target gdn_sm120_op --parallel $(nproc)
+# output: build/m4/src/ops/libgdn_sm120_op.so
 ```
 
-The final PyTorch binding target (eventually `sm120_pytorch` or an equivalent `python-ext` target) should link against `sm120_kernel` and emit a shared object such as `libsm120_pytorch.so`. Keep the resulting `.so` path handy for the registration script.
+## Load in Python
 
-## 2. Load the custom op before vLLM starts
+```python
+from src.ops.gdn_op import load_gdn_op, state_update
+load_gdn_op()  # registers torch.ops.gdn_sm120.state_update
 
-Before any vLLM worker instantiates the Qwen 3.5 model, load the shared object so `torch.ops.sm120` exists. A helper script might look like this:
+S_out_data, S_out_scales = state_update(
+    S_data, S_scales, k, v,
+    alpha=0.95, beta=0.05, d=2048)
+```
 
-```py
+## Load via torch.ops directly
+
+```python
 import torch
-from pathlib import Path
-
-LIB_PATH = Path("build/m4/libsm120_pytorch.so")
-
-if not LIB_PATH.exists():
-    raise FileNotFoundError(f"Missing SM_120 extension: {LIB_PATH}")
-
-torch.ops.load_library(str(LIB_PATH))
-assert hasattr(torch.ops, "sm120"), "sm120 namespace should exist after loading the extension"
+torch.ops.load_library("build/m4/src/ops/libgdn_sm120_op.so")
+S_out_data, S_out_scales = torch.ops.gdn_sm120.state_update(
+    S_data, S_scales, k, v, 0.95, 0.05, 2048)
 ```
 
-Run the helper once in the same environment that will run vLLM (for example, `python scripts/register_sm120_ops.py`).
+## vLLM serve integration (stretch goal — requires vLLM 0.12+)
 
-## 3. Patch vLLM's attention pipeline to call the custom op
-
-With the custom op exposed, wire it into vLLM by replacing the default GDN implementation that the model would normally call. The exact hook depends on the vLLM version, but the general pattern is:
-
-1. Import the module that defines the GDN kernel or attention layer.
-2. Replace or wrap the GDN helper with a thin wrapper that calls `torch.ops.sm120.gdn`.
-3. Ensure the wrapper signature matches the tensors vLLM passes (query/key/value shapes, dtype, stride).
-
-For example (pseudocode):
-
-```py
-from vllm.ops import gdn as vllm_gdn
-import torch
-
-def custom_gdn(query, key, value, **kwargs):
-    return torch.ops.sm120.gdn(query, key, value, **kwargs)
-
-vllm_gdn._fast_path = custom_gdn
+```bash
+vllm serve <model> \
+  --custom-op-lib /home/ubuntu/blackwell-kernel/sm_120/build/m4/src/ops/libgdn_sm120_op.so
 ```
 
-Document the exact symbol that needs patching once the integration file structure is finalized; treat the above snippet as guidance for when the hook exists.
+To attach the op to Qwen3.5 GDN attention layers, patch the model's
+attention forward pass to call `torch.ops.gdn_sm120.state_update` for
+linear attention layers (those with `layer_type == "gdn"`), replacing
+the default BF16 fallback.
 
-## 4. Keep registration deterministic
+## Op signature
 
-- Always load the shared object before `vllm.entrypoints` spins up worker processes so the custom op is available in every process.
-- If you spawn multiple worker processes (for example via `vllm.cli:serve`), keep the registration helper in the entrypoint or use `multiprocessing.set_start_method("spawn")` to avoid missing symbols.
-- Capture the registration log (the commands that load the shared object and patch vLLM) in `artifacts/m4/logs/register.log` for future reference.
+```
+torch.ops.gdn_sm120.state_update(
+    S_data:   Tensor[uint8,    (d*d)//2 ],  # packed E2M1 NVFP4
+    S_scales: Tensor[uint8,    (d*d)//16],  # UE4M3 block scales
+    k:        Tensor[bfloat16, d        ],  # key projection
+    v:        Tensor[bfloat16, d        ],  # value projection
+    alpha:    float,                        # decay gate
+    beta:     float,                        # update scale
+    d:        int,                          # state dimension
+) -> (Tensor[uint8, (d*d)//2], Tensor[uint8, (d*d)//16])
+```
 
-## 5. Verify the registration path
+## Correctness guarantee
 
-Run `python test/test_vllm_integration.py` after you load the library. The script checks that:
+Output satisfies FR-6: max element-wise relative error vs BF16 reference
+< 5% for d=512, 1024, 2048. Verified by M3 correctness gate (M3C_EXIT=0).
 
-- PyTorch and vLLM meet the minimum versions from `cmake/SM120Dependencies.cmake`.
-- CUDA is available (warns if not).
-- The `torch.ops.sm120.gdn` symbol exists.
+## Hardware requirement
 
-This script is the lightweight smoke test for the M4-C slice; keep the log next to the other `artifacts/m4` outputs.
+RTX 5090 (SM_120) or any Blackwell GPU with `compute_120f` support.
+Requires CUDA 12.9+ and driver 590.x+.
