@@ -1,9 +1,10 @@
 enable_language(CUDA)
 
-add_library(sm120_kernel STATIC gdn_kernel.cu)
+add_library(sm120_kernel STATIC gdn_kernel.cu gdn_state_update.cu)
 target_include_directories(sm120_kernel PUBLIC
   ${CMAKE_SOURCE_DIR}/include
   ${SM120_BINARY_INCLUDE_DIR}
+  ${CMAKE_SOURCE_DIR}/src/intrinsics
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(sm120_kernel PUBLIC sm120_intrinsics sm120_config)
 set(SM120_NVCC_CODEGEN_ARCH "arch=${SM120_COMPUTE_TARGET},code=${SM120_TARGET_ARCH}")
@@ -56,6 +57,18 @@ add_custom_target(gdn_tiled_ptx
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
   DEPENDS gdn_tiled_kernel.cu
   COMMENT "Tiled tcgen05 NVFP4 2:4 probe PTX on SM120"
+)
+
+add_custom_target(gdn_state_update_ptx
+  COMMAND ${CMAKE_CUDA_COMPILER}
+    -ptx -arch=sm_120 -std=c++17 --use_fast_math -O3
+    -Xptxas -O3 --maxrregcount=64
+    -DUSE_NVFP4=1 -DSTRUCTURED_SPARSITY=24
+    -o ${CMAKE_CURRENT_BINARY_DIR}/gdn_state_update_sm120.ptx
+    gdn_state_update.cu
+  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  DEPENDS gdn_state_update.cu
+  COMMENT "Emit NVFP4 state-update PTX on SM120"
 )
 
 if(DEFINED ENV{SM120_ENABLE_TCGEN05_PROBE})
