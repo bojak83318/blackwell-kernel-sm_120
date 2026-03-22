@@ -1,8 +1,8 @@
-"""M4-B loader for ``torch.ops.gdn_sm120.state_update``.
+"""M4-B loader for ``torch.ops.sm120.gdn``.
 
 This module locates and loads the SM_120 GDN PyTorch extension, then
-re-exports the registered ``state_update`` operator so higher layers can use
-it without repeating the loading logic. The loader honors the
+re-exports the registered ``gdn`` operator so higher layers can use it
+without repeating the loading logic. The loader honors the
 ``SM120_GDN_LIBRARY`` environment variable and otherwise probes a few
 likely directories under the repository root (build/, src/pytorch/, etc.).
 """
@@ -16,12 +16,14 @@ from typing import Any, Iterable, Optional, Union
 
 import torch
 
-__all__ = ["register_gdn_ops", "ensure_gdn_ops", "state_update"]
+__all__ = ["register_gdn_ops", "ensure_gdn_ops", "gdn"]
 
 _LIBRARY_ENV = "SM120_GDN_LIBRARY"
-_NAMESPACE = "gdn_sm120"
-_OP_NAME = "state_update"
+_NAMESPACE = "sm120"
+_OP_NAME = "gdn"
 _CANDIDATE_LIB_BASES = (
+    "libsm120_ops",
+    "sm120_ops",
     "libgdn_sm120",
     "gdn_sm120",
     "sm120_pytorch",
@@ -145,12 +147,12 @@ def ensure_gdn_ops(library_path: Optional[Union[str, Path]] = None) -> Path:
     return register_gdn_ops(library_path)
 
 
-def _state_update_callable() -> Any:
+def _gdn_callable() -> Any:
     ensure_gdn_ops()
     namespace = getattr(torch.ops, _NAMESPACE)
     return getattr(namespace, _OP_NAME)
 
 
-def state_update(*args: Any, **kwargs: Any) -> Any:
-    """Call the registered ``torch.ops.gdn_sm120.state_update`` operator."""
-    return _state_update_callable()(*args, **kwargs)
+def gdn(*args: Any, **kwargs: Any) -> Any:
+    """Call the registered ``torch.ops.sm120.gdn`` operator."""
+    return _gdn_callable()(*args, **kwargs)

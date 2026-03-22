@@ -15,7 +15,7 @@ This document records the commands that prove the SM_120 GDN kernel can be exerc
          -DSM120_ENABLE_VLLM_CHECKS=ON \
          -DSM120_BUILD_BENCHMARKS=OFF \
          -DSM120_ENABLE_TENSORRT_LLM=OFF
-   cmake --build build/m4 --target sm120_kernel
+   cmake --build build/m4 --target sm120_ops
    ```
    Keep the build directory dedicated to the M4 slice so logs and artifacts stay organized.
 
@@ -26,15 +26,12 @@ This document records the commands that prove the SM_120 GDN kernel can be exerc
    This smoke test verifies the dependency versions, CUDA availability, and the existence of `torch.ops.sm120.gdn`. Capture the output alongside the other `artifacts/m4` logs.
 
 3. **Document the registration command**
-   - Because `vllm` requires the custom op to be registered before launching the server, log the registration call that loads `libsm120_pytorch.so` and patches `vllm` in `artifacts/m4/logs/register.log`.
+   - Because `vllm` requires the custom op to be registered before launching the server, log the registration call that loads `build/m4/src/ops/libsm120_ops.so` and patches `vllm` in `artifacts/m4/logs/register.log`.
 
 4. **Optional: start a minimal vLLM session**
    When the integration hook is in place, a representative command looks like:
    ```sh
-   python -m vllm.entrypoints.run \
-         --model qwen-3.5-7b-demo \
-         --max-output-length 8 \
-         --tensor-parallel-size 1
+   bash scripts/serve_qwen35_hf_baseline.sh
    ```
    Keep the actual invocation aligned with the checkpoint/weights you are validating. Redirect the stdout/stderr to `artifacts/m4/logs/vllm_run.log` whenever you capture evidence.
 
@@ -52,7 +49,7 @@ docker run --rm --gpus all \
           -DSM120_ENABLE_VLLM_CHECKS=ON \
           -DSM120_BUILD_BENCHMARKS=OFF \
           -DSM120_ENABLE_TENSORRT_LLM=OFF && \
-    cmake --build build/m4 --target sm120_kernel && \
+    cmake --build build/m4 --target sm120_ops && \
     python test/test_vllm_integration.py
   '
 ```

@@ -11,10 +11,10 @@ cmake -S . -B build/m4 \
       -DSM120_BUILD_TESTS=ON \
       -DSM120_ENABLE_VLLM_CHECKS=ON \
       -DSM120_BUILD_BENCHMARKS=OFF
-cmake --build build/m4 --target sm120_kernel
+cmake --build build/m4 --target sm120_ops
 ```
 
-The final PyTorch binding target (eventually `sm120_pytorch` or an equivalent `python-ext` target) should link against `sm120_kernel` and emit a shared object such as `libsm120_pytorch.so`. Keep the resulting `.so` path handy for the registration script.
+The PyTorch binding target is `sm120_ops` and emits `libsm120_ops.so` (for example, `build/m4/src/ops/libsm120_ops.so`). Keep the resulting `.so` path handy for the registration script.
 
 ## 2. Load the custom op before vLLM starts
 
@@ -24,7 +24,7 @@ Before any vLLM worker instantiates the Qwen 3.5 model, load the shared object s
 import torch
 from pathlib import Path
 
-LIB_PATH = Path("build/m4/libsm120_pytorch.so")
+LIB_PATH = Path("build/m4/src/ops/libsm120_ops.so")
 
 if not LIB_PATH.exists():
     raise FileNotFoundError(f"Missing SM_120 extension: {LIB_PATH}")
@@ -33,7 +33,7 @@ torch.ops.load_library(str(LIB_PATH))
 assert hasattr(torch.ops, "sm120"), "sm120 namespace should exist after loading the extension"
 ```
 
-Run the helper once in the same environment that will run vLLM (for example, `python scripts/register_sm120_ops.py`).
+Run the helper once in the same environment that will run vLLM.
 
 ## 3. Patch vLLM's attention pipeline to call the custom op
 
@@ -56,6 +56,10 @@ vllm_gdn._fast_path = custom_gdn
 ```
 
 Document the exact symbol that needs patching once the integration file structure is finalized; treat the above snippet as guidance for when the hook exists.
+
+In this repository, use these entrypoints:
+- `scripts/serve_qwen35_hf_baseline.sh` for native vLLM baseline.
+- `scripts/serve_qwen35_hf_sm120.sh` to load `ops.vllm_sm120_plugin` (via `VLLM_PLUGINS`) and register `torch.ops.sm120.gdn` before server startup.
 
 ## 4. Keep registration deterministic
 
