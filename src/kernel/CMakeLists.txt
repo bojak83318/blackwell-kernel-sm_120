@@ -8,9 +8,6 @@ target_include_directories(sm120_kernel PUBLIC
   ${CMAKE_SOURCE_DIR}/src/intrinsics
   ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(sm120_kernel PUBLIC sm120_intrinsics sm120_config)
-set(SM120_NVCC_GENCODE_FLAGS
-  -gencode=arch=compute_120f,code=sm_120
-)
 
 set_target_properties(sm120_kernel PROPERTIES
   CUDA_ARCHITECTURES OFF
