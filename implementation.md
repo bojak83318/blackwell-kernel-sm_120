@@ -1,195 +1,50 @@
-# Implementation Plan: SM_120 GDN Kernel
+# Implementation Plan: GDN Throughput Optimization
 
 ## Purpose
-This file is the execution plan for `blackwell-kernel/sm_120`. It is written to support narrow `sub-mini` implementation passes. `TASK.md` is the factual progress tracker; this file defines phase order, write scopes, and validation gates.
+Achieve sustained inference throughput of 133 tok/s on a single NVIDIA RTX 5090 (SM_120 Blackwell, 32 GB GDDR7) running Qwen3.5-35B-A3B with the validated Mixed-Precision GDN architecture. This document governs throughput engineering only; the architecture is frozen.
 
-## Working Decisions From The PRD
-- Use a vLLM-first integration path for the first implementation passes.
-- Treat TensorRT-LLM as a later plugin phase, not the initial integration target.
-- Optimize for fast correctness iteration first, then production throughput.
-- Treat long-context support as a vLLM validation requirement and a TRT-LLM build-time tradeoff.
+## Core Scope & Guardrails
+- **Model Target:** Qwen3.5-35B-A3B on RTX 5090, CUDA 12.9 (symlinked to 12.8 for flashinfer), vLLM 0.18.0.
+- **Precision Lock:** NVFP4 weights + BF16 recurrent GDN state.
+- **SQNR Gate:** Must maintain SQNR ≥ 50 dB on BF16 recurrent state after every kernel change.
+- **Coherence Gate:** Output must be coherent with no repetition loops or language switches at any batch size.
+- **Memory Envelope:** 32 GB. OOM during CUDA Graph capture is a hard blocker.
+- **Framework Lock:** Do not upgrade vLLM 0.18.0 or remove the CUDA 12.8 symlink.
 
-## Current Repo State
-- `blackwell-kernel/sm_120/` currently contains only `PRD.md`.
-- The initial implementation pass must create the project skeleton before kernel work can begin.
+## Engineering Phases
 
-## Proposed Project Layout
-All paths below are planned targets and do not imply the files already exist.
+### Phase 1: CUDA Graph Capture
+**Goal:** Remove `--enforce-eager` to eliminate CPU overhead and capture the static decode graph.
+- **Target Throughput:** 25–45 tok/s.
+- **Validation Gate:** No graph break on startup. 5-run benchmark must show variance < 10% across runs and average ≥ 25 tok/s.
+- **Write Scope:** Server launch script configuration, and potentially vLLM C++ patch if GDN state resetting is needed between requests.
 
-```text
-blackwell-kernel/sm_120/
-  PRD.md
-  TASK.md
-  implementation.md
-  CMakeLists.txt
-  include/
-  src/
-    kernel/
-    runtime/
-    pytorch/
-    trtllm/
-  python/
-  tests/
-    unit/
-    integration/
-  benchmarks/
-  docker/
-  scripts/
-  docs/
-  artifacts/
-```
+### Phase 2: Batching
+**Goal:** Increase `max-num-seqs` to 4-8 and enable `chunked-prefill` to amortize weight load costs.
+- **Target Throughput:** 50–80 tok/s.
+- **Validation Gate:** No OOM during launch or concurrent requests. All 4 outputs must be coherent and distinct. Average throughput ≥ 50 tok/s.
+- **Write Scope:** Launch configuration and verification scripts.
 
-## Execution Rules
-- Keep each delegated pass bounded to one module or write scope.
-- Do not mark any task complete until code or evidence exists locally.
-- Prefer verification immediately after each slice instead of large unverified batches.
-- Keep fallback paths explicit so correctness can be compared at every stage.
+### Phase 3: Context Expansion
+**Goal:** Expand `max-model-len` to 2048 to reduce KV cache fragmentation and fully utilize chunked prefill.
+- **Target Throughput:** 70–95 tok/s.
+- **Validation Gate:** Average throughput ≥ 65 tok/s. 256-token output remains coherent. SQNR ≥ 50 dB.
+- **Write Scope:** Launch configuration, long-prompt verification scripts.
 
-## Phase Order
+### Phase 4: Kernel Fusion
+**Goal:** Profile the current state using `nsys`, then implement a fused GDN state update and flash attention kernel if HBM round-trips are the bottleneck.
+- **Target Throughput:** 100–133 tok/s.
+- **Validation Gate:** Bottleneck identified with >5% contribution via `nsys`. After fusion: throughput 100–133 tok/s, SQNR ≥ 50 dB, and output coherence.
+- **Write Scope:** `gdn_state_update` CUDA kernel (using `__nv_bfloat162`), vLLM 0.18.0 C++ integration patch, SQNR validation script.
 
-### Phase 0: Bootstrap And Shared Config
-Goal: create the skeleton required for independent kernel, integration, and test work.
+### Phase 5: Production Baseline Lock
+**Goal:** Perform a formal 5-run production benchmark to document variance, coherence, and exact launch flags.
+- **Target Throughput:** 133 tok/s sustained.
+- **Validation Gate:** Average ≥ 133 tok/s AND variance < 5%.
+- **Write Scope:** Final documentation and production configuration scripts.
 
-Deliverables:
-- top-level build config for the `sm_120` project area
-- initial directory layout
-- shared test and benchmark entry points
-- environment/version notes for SM_120 prerequisites
-
-Suggested write scopes:
-- Slice P0-A: root build files and shared config
-- Slice P0-B: test harness and benchmark harness skeleton
-- Slice P0-C: docs for environment assumptions and local commands
-
-Gate to exit phase:
-- project skeleton exists
-- at least one no-op or placeholder build/test command runs successfully
-
-### Phase 1: CUTLASS Kernel Baseline
-Goal: stand up the custom GDN kernel and prove numerical correctness before framework integration.
-
-Deliverables:
-- kernel source targeting SM_120
-- host launcher and parameter validation
-- reference implementation for result comparison
-- unit tests for supported shapes and failure handling
-- first microbenchmark output
-
-Suggested write scopes:
-- Slice P1-A: kernel scaffold in `src/kernel/`
-- Slice P1-B: launcher/runtime helpers in `src/runtime/`
-- Slice P1-C: correctness tests in `tests/unit/`
-- Slice P1-D: benchmark harness in `benchmarks/`
-
-Gate to exit phase:
-- kernel builds
-- correctness tests pass against the reference path
-- baseline benchmark artifacts are recorded
-
-### Phase 2: PyTorch Extension And vLLM Path
-Goal: expose the validated kernel through `torch.ops` and wire it into the intended vLLM execution path.
-
-Deliverables:
-- PyTorch extension build
-- `torch.ops` registration
-- Python wrapper that handles custom-op and fallback selection
-- vLLM integration hook or patch
-- smoke tests for dynamic sequence lengths
-
-Suggested write scopes:
-- Slice P2-A: C++/PyTorch binding files in `src/pytorch/`
-- Slice P2-B: Python wrapper and loading logic in `python/`
-- Slice P2-C: vLLM integration glue in `python/` or `scripts/`
-- Slice P2-D: integration tests in `tests/integration/`
-
-Gate to exit phase:
-- `torch.ops` path loads cleanly
-- fallback path still works when the extension is absent
-- vLLM smoke tests pass for representative sequence lengths
-
-### Phase 3: End-To-End Validation On The 5090/k3s Stack
-Goal: prove the custom path works in the intended deployment environment and produce evidence.
-
-Deliverables:
-- reproducible environment setup or container definition
-- model-level smoke test invoking the GDN path
-- correctness comparisons at representative sizes
-- throughput and latency measurements across context lengths
-- documented limits and known issues
-
-Suggested write scopes:
-- Slice P3-A: container or environment config in `docker/`
-- Slice P3-B: deployment or run scripts in `scripts/`
-- Slice P3-C: end-to-end tests and evidence capture in `tests/integration/` and `artifacts/`
-- Slice P3-D: operational notes in `docs/`
-
-Gate to exit phase:
-- target-stack smoke test passes
-- evidence exists for correctness and performance
-- known limitations are documented
-
-### Phase 4: TensorRT-LLM Plugin Path
-Goal: wrap the validated kernel in a TensorRT plugin only after the vLLM path is stable.
-
-Deliverables:
-- `IPluginV3` implementation
-- plugin build integration
-- capability checks for SM_120 and supported formats
-- one successful engine build for a fixed `max_seq_len`
-- performance comparison with the vLLM path
-
-Suggested write scopes:
-- Slice P4-A: plugin implementation in `src/trtllm/`
-- Slice P4-B: build and packaging changes
-- Slice P4-C: engine build scripts in `scripts/`
-- Slice P4-D: plugin validation tests and benchmark capture
-
-Gate to exit phase:
-- plugin library builds
-- `trtllm-build --plugin_lib` succeeds for one chosen context length
-- comparison artifacts exist for vLLM vs TRT-LLM
-
-### Phase 5: CI And Acceptance
-Goal: make the work repeatable and ready for handoff.
-
-Deliverables:
-- repeatable local and CI commands
-- documentation for both integration paths
-- acceptance checklist tied to evidence
-
-Suggested write scopes:
-- Slice P5-A: CI workflow or scripted validation entry points
-- Slice P5-B: docs cleanup and usage guides
-- Slice P5-C: acceptance evidence collation
-
-Gate to exit phase:
-- required commands are documented and runnable
-- acceptance checklist is complete and backed by artifacts
-
-## Verification Strategy
-- Unit verification: kernel numerics, shape validation, error handling.
-- Integration verification: extension load, `torch.ops` call path, fallback behavior.
-- System verification: vLLM smoke tests on representative context lengths.
-- Production-path verification: one fixed-length TRT-LLM engine build after vLLM success.
-- Evidence discipline: store benchmark outputs, test logs, and comparison artifacts under `artifacts/`.
-
-## Delegation Guidance For `sub-mini`
-Use one delegated worker per write scope. Good first passes are:
-1. P0-A: bootstrap build files and directory skeleton.
-2. P0-B: test and benchmark harness skeleton.
-3. P1-A: kernel scaffold only.
-4. P1-B: launcher/runtime helpers only.
-5. P1-C: unit tests only.
-
-Avoid delegating these before a local decision is made:
-- supported tensor layouts and dtype contract
-- fallback semantics for unsupported shapes
-- the exact vLLM integration seam
-- the fixed `max_seq_len` chosen for the first TRT-LLM engine build
-
-## Stop Conditions
-Stop and reassess if any of these happen:
-- CUTLASS or CUDA toolchain cannot target SM_120 as assumed.
-- PyTorch extension loading fails for reasons unrelated to the kernel itself.
-- vLLM does not expose a clean integration seam for the GDN path.
-- TRT-LLM plugin requirements force a redesign of the data layout or dtype contract.
+## Sub-Mini Execution Rules
+- Use git worktrees for each unit of work.
+- Only mark items in `TASK.md` as complete when code and validation artifacts exist.
+- Verify SQNR and coherence locally in the worktree before integration.
+- Stop and evaluate if memory leaks (VRAM growth) or SQNR regressions (< 50 dB) are detected.
