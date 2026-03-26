@@ -1,0 +1,17 @@
+{
+  "vllm_sm120f_root": "/home/rocm/vllm-sm120",
+  "vllm_remote_root": "/home/ubuntu/vllm-gdn/vllm-sm120",
+  "branch": "v0.18.0",
+  "commit_sha": "bcf2be96120005e9aea171927f85055a6a5c0cf6",
+  "capability_helper": "vllm/platforms/cuda.py",
+  "dispatcher_paths": [
+    "vllm/model_executor/layers/fused_moe/cutlass_moe.py",
+    "csrc/quantization/fp4/nvfp4_blockwise_moe_kernel.cu",
+    "vllm/model_executor/layers/fused_moe/oracle/nvfp4.py"
+  ],
+  "env": {
+    "vllm_version": "0.18.0",
+    "torch_version": "2.10.0",
+    "cuda_version": "12.9"
+  }
+}

@@ -1,0 +1,1 @@
+Verified TMA symbols and ACQBULK instructions in recompiled binary

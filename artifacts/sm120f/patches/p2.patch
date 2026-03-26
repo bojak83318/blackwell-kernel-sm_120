@@ -1,0 +1,141 @@
+diff --git a/vllm/_custom_ops.py b/vllm/_custom_ops.py
+index 63f347d89..c19a4e896 100644
+--- a/vllm/_custom_ops.py
++++ b/vllm/_custom_ops.py
+@@ -1151,19 +1151,39 @@ def cutlass_fp4_moe_mm(
+     """
+     An FP4 Blockscaled Group Gemm that takes in  a_tensors, b_tensors and runs
+     the gemms for each combination based on the specified problem sizes.
++    """
++    if envs.VLLM_SM120_TRACE:
++        logger.info("Trace: Dispatching to cutlass_fp4_moe_mm (fallback)")
++    return torch.ops._C.cutlass_fp4_group_mm(
++        out_tensors,
++        a_tensors,
++        b_tensors,
++        a_scales,
++        b_scales,
++        alphas,
++        problem_sizes,
++        expert_offsets,
++        sf_offsets,
++    )
+ 
+-    This is used as the MoE gemm during NVFP4 Quantized FusedMoE forward.
+-    - a/b_tensors: the NVFP4 a_ptrs and b_ptrs tensors which are quantized
+-                     input and expert weights.
+-    - a_/b_scales: The blockscales in FP8-E4M3 precision
+-    - expert_offsets/sf_offsets: Indices that mark at which token index
+-                    each expert begins its computation. The number of tokens
+-                    computed with expert E is expert_offsets[E + 1] -
+-                    expert_offsets[E] And the sf_size per expert is
+-                    sf_offset[E+1] - sf_offset[E]
+-    - problem_sizes: MxNxK sizes of each expert's multiplication in two grouped
+-                     MMs used in the fused MoE operation.
++
++def cutlass_moe_fp4_sm120f_tma(
++    out_tensors: torch.Tensor,
++    a_tensors: torch.Tensor,
++    b_tensors: torch.Tensor,
++    a_scales: torch.Tensor,
++    b_scales: torch.Tensor,
++    alphas: torch.Tensor,
++    problem_sizes: torch.Tensor,
++    expert_offsets: torch.Tensor,
++    sf_offsets: torch.Tensor,
++):
++    """
++    Specialized TMA-aware path for SM120 Blackwell on CUDA >= 13.0.
++    Identical interface to cutlass_fp4_moe_mm but allows focused tracing.
+     """
++    if envs.VLLM_SM120_TRACE:
++        logger.info("Trace: Dispatching to cutlass_moe_fp4_sm120f_tma")
+     return torch.ops._C.cutlass_fp4_group_mm(
+         out_tensors,
+         a_tensors,
+diff --git a/vllm/envs.py b/vllm/envs.py
+index caa2fb38a..c74f0b06a 100755
+--- a/vllm/envs.py
++++ b/vllm/envs.py
+@@ -98,6 +98,7 @@ if TYPE_CHECKING:
+     VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE: bool = True
+     VLLM_DISABLE_PYNCCL: bool = False
+     VLLM_USE_OINK_OPS: bool = False
++    VLLM_SM120_TRACE: bool = False
+     VLLM_ROCM_USE_AITER: bool = False
+     VLLM_ROCM_USE_AITER_PAGED_ATTN: bool = False
+     VLLM_ROCM_USE_AITER_LINEAR: bool = True
+@@ -908,6 +909,9 @@ environment_variables: dict[str, Callable[[], Any]] = {
+     "VLLM_USE_OINK_OPS": lambda: (
+         os.getenv("VLLM_USE_OINK_OPS", "False").lower() in ("true", "1")
+     ),
++    "VLLM_SM120_TRACE": lambda: (
++        os.getenv("VLLM_SM120_TRACE", "False").lower() in ("true", "1")
++    ),
+     # Disable aiter ops unless specifically enabled.
+     # Acts as a parent switch to enable the rest of the other operations.
+     "VLLM_ROCM_USE_AITER": lambda: (
+diff --git a/vllm/model_executor/layers/fused_moe/cutlass_moe.py b/vllm/model_executor/layers/fused_moe/cutlass_moe.py
+index 534cab1b8..6aeaeb7f1 100644
+--- a/vllm/model_executor/layers/fused_moe/cutlass_moe.py
++++ b/vllm/model_executor/layers/fused_moe/cutlass_moe.py
+@@ -602,7 +602,11 @@ def run_cutlass_moe_fp4(
+     c1 = _resize_cache(workspace13, (m * topk, n * 2))
+     c2 = _resize_cache(workspace2, (m * topk, n))
+     c3 = _resize_cache(workspace13, (m * topk, k))
+-    ops.cutlass_fp4_moe_mm(
++
++    moe_mm_op = (ops.cutlass_moe_fp4_sm120f_tma
++                 if current_platform.is_sm120f() else ops.cutlass_fp4_moe_mm)
++
++    moe_mm_op(
+         c1,
+         rep_a_fp4,
+         w1_fp4,
+@@ -627,7 +631,7 @@ def run_cutlass_moe_fp4(
+             c2, a2_gscale, expert_offsets, blockscale_offsets, num_topk
+         )
+ 
+-    ops.cutlass_fp4_moe_mm(
++    moe_mm_op(
+         c3,
+         int_fp4,
+         w2_fp4,
+diff --git a/vllm/platforms/cuda.py b/vllm/platforms/cuda.py
+index 2025c41ab..470df4e65 100644
+--- a/vllm/platforms/cuda.py
++++ b/vllm/platforms/cuda.py
+@@ -501,6 +501,33 @@ class CudaPlatformBase(Platform):
+     def use_custom_op_collectives(cls) -> bool:
+         return True
+ 
++    @classmethod
++    def is_sm120f(cls) -> bool:
++        capability = cls.get_device_capability()
++        if capability is None or capability.major != 12:
++            return False
++        # compute_120f requires CUDA >= 13.0
++        is_f = torch.version.cuda is not None and float(
++            torch.version.cuda[:4]) >= 13.0
++        if is_f:
++            logger.info_once("Detected Blackwell SM120 with CUDA >= 13.0. "
++                             "Using compute_120f (full TMA) path.")
++        return is_f
++
++    @classmethod
++    def is_sm120a(cls) -> bool:
++        capability = cls.get_device_capability()
++        if capability is None or capability.major != 12:
++            return False
++        # compute_120a is the fallback for Blackwell on CUDA < 13.0
++        is_a = not cls.is_sm120f()
++        if is_a:
++            logger.info_once(
++                "Detected Blackwell SM120 with CUDA < 13.0 (%s). "
++                "Falling back to compute_120a (basic FP4) path.",
++                torch.version.cuda)
++        return is_a
++
+ 
+ # NVML utils
+ # Note that NVML is not affected by `CUDA_VISIBLE_DEVICES`,

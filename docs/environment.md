@@ -2,11 +2,11 @@
 
 ## Overall dependency matrix
 The minimal dependency matrix is defined in `cmake/SM120Dependencies.cmake`. The current baseline values are:
-- CUDA 12.8 (toolkit + driver that exposes `sm_120` compute capability — see the [NVIDIA CUDA 12.8 release overview](https://developer.nvidia.com/blog/cuda-toolkit-12-8-delivers-nvidia-blackwell-support/))
-- CUTLASS 4.2.1 (pinned CUTLASS release for the kernels and the Python DSL preview that aligns with the PRD — see the [CUTLASS 4.2.1 overview](https://docs.nvidia.com/cutlass/4.2.1/media/docs/pythonDSL/overview.html))
-- PyTorch 2.9.1+cu128 (runtime version targeted by the extension; the [PyTorch previous versions page](https://pytorch.org/get-started/previous-versions/) documents the CUDA 12.8 `cu128` wheel for 2.9.1)
-- vLLM 0.12+ (the early integration hook for the GDN path; the [vLLM v0.12.0 release notes](https://github.com/vllm-project/vllm/releases/tag/v0.12.0) enumerate the base features and CUDA alignment)
-- TensorRT 9.2 (the later TRT-LLM plugin target / build-time reference)
+- CUDA 12.9+ (toolkit + driver that exposes `sm_120` compute capability; supports `compute_120a` fallback for 12.8 and full `compute_120f` detection for 13.0+)
+- CUTLASS 4.x (pinned CUTLASS release for the TMA-aware FP4 MoE kernels)
+- PyTorch 2.10.0+ (runtime version targeted by the extension)
+- vLLM 0.18.0+ (the integration target for the TMA-aware MoE FP4 path)
+- TensorRT 10.0+ (the later TRT-LLM plugin target)
 
 The helper `sm120_print_dependency_matrix` prints this list during configuration so any change is easy to audit. Keep this file in sync with actual dependency upgrades; the version strings in `cmake/SM120Dependencies.cmake` drive both the root CMake build and downstream packaging. This matrix mirrors the baseline defined in `PRD_GDN_Kernel.md` and is backed by the cited release notes.
 
@@ -23,5 +23,5 @@ The helper `sm120_print_dependency_matrix` prints this list during configuration
 
 ## Quick verification checklist
 1. Run `cmake -S . -B build -DSM120_BUILD_TESTS=ON` and ensure the dependency matrix logs the versions above.
-2. Confirm `python -m pip show torch` (look for `2.9.1+cu128`) and `python -m pip show vllm` (≥ 0.12) before running integration scripts.
+2. Confirm `python -m pip show torch` (look for `2.10.0`) and `python -m pip show vllm` (0.18.0) before running integration scripts.
 3. If you add a new dependency, update `cmake/SM120Dependencies.cmake` and rerun the configuration step to keep the matrix accurate.

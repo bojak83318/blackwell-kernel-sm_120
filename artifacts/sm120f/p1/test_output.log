@@ -1,0 +1,8 @@
+INFO 03-25 15:34:12 [cuda.py:525] Detected Blackwell SM120 with CUDA < 13.0 (12.8). Falling back to compute_120a (basic FP4) path.
+INFO 03-25 15:34:12 [cuda.py:525] Detected Blackwell SM120 with CUDA < 13.0 (12.9). Falling back to compute_120a (basic FP4) path.
+INFO 03-25 15:34:12 [cuda.py:513] Detected Blackwell SM120 with CUDA >= 13.0. Using compute_120f (full TMA) path.
+.......
+----------------------------------------------------------------------
+Ran 7 tests in 0.001s
+
+OK

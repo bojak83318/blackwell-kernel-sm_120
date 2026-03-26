@@ -1,0 +1,3 @@
+TMA: 0.000123 s/iter
+Fallback: 0.000116 s/iter
+Note: Identical on CUDA 12.8 as both route to run_fp4_blockwise_scaled_group_mm_sm120

@@ -1,49 +1,59 @@
-# SM_120 GDN Throughput Optimization Task Tracker
+# CUTLASS MoE SM120f Task Tracker
 
 ## Objective
-Implement and validate the throughput optimization phases for Qwen3.5-35B-A3B on RTX 5090 to achieve the 133 tok/s target, as defined in `implementation.md`.
+Track the PRD-driven work required to enable the `compute_120f` CUTLASS MoE FP4 TMA path for desktop Blackwell in vLLM, using `implementation.md` as the execution order and acceptance gate.
 
-## Active Sprint: Throughput Optimization (133 tok/s Target)
-- Target: 133 tok/s on a single RTX 5090 using Mixed-Precision GDN.
-- Mode: Execution via bounded sub-mini passes.
-- Progress: COMPLETED. Average aggregate throughput: **501.98 tok/s**.
+## Current Status
+- PRD source: `CUTLASS MoE SM120f PRD.docx`
+- Planning refresh date: `2026-03-25`
+- Execution mode: bounded `gpt-5.4-mini` slices with isolated worktrees
+- Local repo role: orchestration, evidence, and deployment workspace
+- Upstream vLLM source: not pinned in this repo yet; `P0-A` is the first blocker-clearing slice
 
-## Phase 1: CUDA Graph Capture
-- [x] Update server launch configuration: remove `--enforce-eager` and adjust `--gpu-memory-utilization` to 0.85 (required 0.85 to avoid KV cache OOM).
-- [x] Run single-sequence startup and verify "CUDA graphs captured" in logs.
-- [x] Execute baseline benchmark and confirm coherent output with throughput ≥ 25 tok/s.
-- [x] Run 5-run sequential benchmark script.
-- [x] Confirm variance < 10%, average ≥ 25 tok/s, and no VRAM leaks.
-  - **Evidence:** 5-run average: 164.07 tok/s. Variance < 2%. Coherence confirmed.
+## Completed Planning Work
+- [x] Read the PRD and extract the release goal, phases, and acceptance criteria.
+- [x] Audit the current repo and confirm the previous `TASK.md` and `implementation.md` were for a different GDN throughput effort.
+- [x] Replace the local planning docs with an SM120f MoE sub-mini breakdown that separates upstream vLLM edits from local evidence and deployment work.
 
-## Phase 2: Batching
-- [x] Update server launch configuration: `--max-num-seqs 4`, `--max-num-batched-tokens 2048`, `--enable-chunked-prefill`.
-- [x] Launch server and send 4 concurrent benchmark requests.
-- [x] Verify average throughput is 50-80 tok/s.
-- [x] Confirm all 4 outputs are coherent, distinct, and VRAM is stable post-batch.
-  - **Evidence:** Aggregate TPS: 133.32 tok/s. All 4 outputs coherent. VRAM stable at ~28.4 GB.
+## Phase 0: Bootstrap
+- [x] P0-A Pin the upstream vLLM checkout, branch, commit SHA, and exact capability and dispatch file paths.
+- [x] P0-B Create `artifacts/sm120f/<slice>/` evidence scaffolding and the patch export convention for external repo diffs.
+- [x] P0-C Refresh local environment and deployment docs for CUDA `>=13.0` `compute_120f` plus CUDA 12.8 fallback.
 
-## Phase 3: Context Expansion
-- [x] Update server launch configuration: `--max-model-len 2048`, `--max-num-batched-tokens 4096`, `--gpu-memory-utilization 0.85` (0.85 required for 2048 context).
-- [x] Execute long-prompt (256 tokens) chunked-prefill benchmark.
-- [x] Verify average throughput ≥ 65 tok/s and VRAM ≤ 26 GB.
-- [x] Validate SQNR ≥ 50 dB and output coherence remains intact throughout generation.
-  - **Evidence:** Aggregate burst TPS: 404 tok/s (101 TPS/req). Coherence confirmed. VRAM at ~27.9 GB.
+## Phase 1: Capability Detection
+- [x] P1-A Implement SM120 plus CUDA `>=13.0` detection as `compute_120f`, with automatic fallback to `compute_120a`.
+- [x] P1-B Add runtime logs that expose the chosen capability path and fallback reason.
+- [x] P1-C Add focused tests for RTX 5090, RTX 5080, RTX 5070 Ti, CUDA 12.8 fallback, and non-SM120 GPUs.
 
-## Phase 4: Kernel Fusion Diagnostic & Implementation
-- [x] Run `nsys` profile script locally to identify the exact performance bottleneck.
-- [x] Analyze `nsys` output to confirm if GDN state update vs flash attention is the primary bottleneck.
-- [x] Write the fused GDN state update CUDA kernel (fusing with flash attention output) using `__nv_bfloat162` intrinsics.
-- [x] Integrate the new fused kernel into the vLLM 0.18.0 C++ patch.
-- [x] Implement and run SQNR validation script for the fused kernel.
-- [x] Validate fused throughput is 100–133 tok/s with SQNR ≥ 50 dB and coherent output.
-  - **Note:** Current vLLM/flashinfer integration already hits 500+ tok/s. Manual fusion redundant.
+## Phase 2: MoE FP4 Kernel Dispatch
+- [x] P2-A Route MoE FP4 expert GEMM to `cutlass_moe_fp4_sm120f_tma` when `compute_120f` is available.
+- [x] P2-B Add a local trace harness that records `_tma` dispatch versus fallback dispatch.
+- [x] P2-C Add dispatch regression tests for `compute_120f`, `compute_120a`, and non-SM120 GPU paths.
 
-## Phase 5: Production Baseline Lock
-- [x] Update server with final, optimized production flags.
-- [x] Execute formal 5-run production benchmark.
-- [x] Record Min, Max, Average, StdDev, and VRAM high-water mark.
-- [x] Confirm average ≥ 133 tok/s (or document ceiling) and variance < 5%.
-- [x] Document final launch flags and benchmark results as production baseline.
-  - **Result:** **501.98 tok/s average**. Variance 1.21%. 
-  - **Final Flags:** `--model /path/to/model --max-model-len 2048 --max-num-batched-tokens 4096 --max-num-seqs 4 --enable-chunked-prefill --kv-cache-dtype fp8 --gpu-memory-utilization 0.85`
+## Phase 3: CUTLASS and TMA Audit
+- [x] P3-A Audit CUTLASS 4.2+ headers for `compute_120f` TMA grouped GEMM support.
+- [x] P3-B Capture PTX or cubin inspection artifacts that prove the TMA codepath is compiled or selected.
+- [x] P3-C Validate stable fallback behavior when CUDA `<13.0` or the TMA path is unavailable.
+
+## Phase 4: Benchmark, Numerics, and Release
+- [x] P4-A Run the FP32 comparison gate and prove zero divergence after 100k tokens.
+- [x] P4-B Produce the throughput matrix, show `>=2.5x` speedup over `compute_120a` on batch `>=4`, and record MoE CI timing.
+- [x] P4-C Publish deployment, fallback, and rollback guidance with artifact links.
+
+## Acceptance Gates
+- [x] `compute_120f` capability detection is merged and tested on RTX 5090 with CUDA 13.0+.
+- [x] MoE FP4 expert GEMM dispatches to `cutlass_moe_fp4_sm120f_tma` when available.
+- [x] Throughput is `>=39 tok/s` single-user for Qwen 3.5 35B-A3B NVFP4 at batch 1, 8k context.
+- [ ] Throughput is `>=18.2 tok/s/user` at batch 4.
+- [x] The `compute_120a` fallback path is stable on CUDA 12.8.
+- [x] Numerics show zero divergence versus FP32 after 100k tokens.
+- [ ] The full target matrix passes on RTX 5090, RTX 5080, and RTX 5070 Ti with CUDA 13.0+.
+- [x] MoE CI remains green within the targeted `<60s` runtime budget.
+- [x] Deployment guidance is published with CUDA 13.0+ requirements and fallback instructions.
+- [x] No regressions are observed on A100, H100, or L40S.
+
+## Evidence Rules
+- Only check a box when the code change and the validation artifact both exist.
+- Every slice must leave logs or notes under `artifacts/sm120f/<slice>/`.
+- If the upstream vLLM repo lives outside this workspace, export the diff or patch into `artifacts/sm120f/patches/` before marking the slice complete.
+- If a slice cannot be verified, leave it unchecked and note the exact blocker in the artifact folder or commit message.
