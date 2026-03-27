@@ -523,12 +523,18 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
         )
 
         # GDN Mixed-Precision State Update Manager
+        enable_recurrent_telemetry = (
+            str(getattr(envs, "VLLM_GDN_RECURRENT_TELEMETRY", "0")).lower()
+            in ("1", "true", "yes", "on")
+        )
+
         self.gdn_mgr = GdnMixedPrecisionManager(
             state_dim=self.value_dim // self.tp_size,
             batch=max_num_seqs,
             state_mode="bf16",
             triton_output_proj=True,
             telemetry_every=50,
+            enable_recurrent_telemetry=enable_recurrent_telemetry,
             sqnr_floor_db=50.0,
             device=current_platform.current_device(),
         )
@@ -984,7 +990,7 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                 cu_seqlens=non_spec_query_start_loc,
                 use_qk_l2norm_in_kernel=True,
             )
-            if self.gdn_mgr is not None:
+            if self.gdn_mgr is not None and self.gdn_mgr.enable_recurrent_telemetry:
                 self.gdn_mgr.recurrent_step(
                     S_prev=initial_state_for_telem,
                     k=key_non_spec.detach(),
@@ -1027,7 +1033,7 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                     use_qk_l2norm_in_kernel=True,
                 )
             )
-            if self.gdn_mgr is not None:
+            if self.gdn_mgr is not None and self.gdn_mgr.enable_recurrent_telemetry:
                 self.gdn_mgr.recurrent_step(
                     S_prev=initial_state_for_telem,
                     k=key_non_spec.detach(),
@@ -1109,7 +1115,7 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
             ssm_state_indices=non_spec_state_indices_tensor[:num_actual_tokens],
             use_qk_l2norm_in_kernel=True,
         )
-        if self.gdn_mgr is not None:
+        if self.gdn_mgr is not None and self.gdn_mgr.enable_recurrent_telemetry:
             packed_cu_seqlens = torch.arange(
                 0,
                 num_actual_tokens + 1,

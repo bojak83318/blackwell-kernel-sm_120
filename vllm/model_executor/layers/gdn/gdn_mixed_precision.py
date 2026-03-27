@@ -297,6 +297,8 @@ class GdnMixedPrecisionManager:
         update path is isolated so mode swaps don't touch the logit path.
     telemetry_every : int
         Emit a telemetry log line every N forward steps.
+    enable_recurrent_telemetry : bool
+        If False, skip recurrent telemetry entirely (production default).
     sqnr_floor_db : float
         Raise GdnSqnrAlertError if SQNR drops below this value.
     device : torch.device
@@ -310,6 +312,7 @@ class GdnMixedPrecisionManager:
         state_mode: Literal["bf16", "fp8e5m2"] = "bf16",
         triton_output_proj: bool = True,
         telemetry_every: int = 50,
+        enable_recurrent_telemetry: bool = False,
         sqnr_floor_db: float = 50.0,
         device: Optional[torch.device] = None,
     ):
@@ -318,6 +321,7 @@ class GdnMixedPrecisionManager:
         self.state_mode        = state_mode
         self.triton_output_proj = triton_output_proj
         self.telemetry_every   = telemetry_every
+        self.enable_recurrent_telemetry = enable_recurrent_telemetry
         self.sqnr_floor_db     = sqnr_floor_db
         self.device            = device or torch.device("cuda:0")
         self._step             = 0
@@ -333,7 +337,7 @@ class GdnMixedPrecisionManager:
         logger.info(
             f"GdnMixedPrecisionManager init: "
             f"state_dim={state_dim} batch={batch} mode={state_mode} "
-            f"triton_proj={triton_output_proj} "
+            f"triton_proj={triton_output_proj} recurrent_telem={enable_recurrent_telemetry} "
             f"ext={'loaded' if self._ext else 'fallback'}"
         )
 
@@ -436,6 +440,9 @@ class GdnMixedPrecisionManager:
         Compares the hardware-produced recurrent state against a float32
         reference computed from the same tensors already available in _forward_core.
         """
+        if not self.enable_recurrent_telemetry:
+            return
+
         t0 = time.perf_counter()
         self._step += 1
 
