@@ -85,6 +85,9 @@ from vllm.triton_utils import tl, triton
 from vllm.utils.torch_utils import direct_register_custom_op
 from vllm.v1.attention.backend import AttentionMetadata
 from vllm.v1.attention.backends.gdn_attn import GDNAttentionMetadata
+from vllm.model_executor.layers.gdn.gdn_mixed_precision import (
+    GdnMixedPrecisionManager,
+)
 
 from .interfaces import (
     HasInnerState,
@@ -398,6 +401,7 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
         config: Qwen3NextConfig,
         model_config: ModelConfig | None = None,
         cache_config: CacheConfig | None = None,
+        max_num_seqs: int = 1,
         quant_config: QuantizationConfig | None = None,
         speculative_config: SpeculativeConfig | None = None,
         prefix: str = "",
@@ -516,6 +520,17 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
         self.chunk_gated_delta_rule = ChunkGatedDeltaRule()
         self.enable_packed_recurrent_decode = (
             envs.VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE
+        )
+
+        # GDN Mixed-Precision State Update Manager
+        self.gdn_mgr = GdnMixedPrecisionManager(
+            state_dim=self.value_dim // self.tp_size,
+            batch=max_num_seqs,
+            state_mode="bf16",
+            triton_output_proj=True,
+            telemetry_every=50,
+            sqnr_floor_db=50.0,
+            device=current_platform.current_device(),
         )
 
         compilation_config = get_current_vllm_config().compilation_config
@@ -686,7 +701,14 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
         core_attn_out = self.norm(core_attn_out, z)
         core_attn_out = core_attn_out.reshape(z_shape_og)
         core_attn_out = rearrange(core_attn_out, "... h d -> ... (h d)")
-        output[:num_tokens], _ = self.out_proj(core_attn_out)
+        
+        # Use mixed-precision manager for output projection (Triton bypass hook)
+        if self.gdn_mgr.triton_output_proj:
+            output[:num_tokens] = self.gdn_mgr.output_projection(
+                core_attn_out, self.out_proj.weight
+            )
+        else:
+            output[:num_tokens], _ = self.out_proj(core_attn_out)
 
     def _warmup_prefill_kernels(self, mixed_qkv: torch.Tensor) -> None:
         """Warm up GDN prefill kernels during V1 profiling.
@@ -947,6 +969,7 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
         if attn_metadata.num_prefills > 0:
             initial_state = ssm_state[non_spec_state_indices_tensor].contiguous()
             initial_state[~has_initial_state, ...] = 0
+            initial_state_for_telem = initial_state.detach().clone()
             (
                 core_attn_out_non_spec,
                 last_recurrent_state,
@@ -961,16 +984,36 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                 cu_seqlens=non_spec_query_start_loc,
                 use_qk_l2norm_in_kernel=True,
             )
+            if self.gdn_mgr is not None:
+                self.gdn_mgr.recurrent_step(
+                    S_prev=initial_state_for_telem,
+                    k=key_non_spec.detach(),
+                    v=value_non_spec.detach(),
+                    g=g_non_spec.detach(),
+                    beta=beta_non_spec.detach(),
+                    S_new_hw=last_recurrent_state.detach(),
+                    cu_seqlens=non_spec_query_start_loc.detach(),
+                    use_qk_l2norm_in_kernel=True,
+                )
             # Init cache
             ssm_state[non_spec_state_indices_tensor] = last_recurrent_state.to(
                 ssm_state.dtype
             )
         elif attn_metadata.num_decodes > 0:
+            initial_state_for_telem = ssm_state[
+                non_spec_state_indices_tensor
+            ].contiguous().clone()
+            if spec_sequence_masks is not None:
+                a_non_spec = a.index_select(0, non_spec_token_indx)
+                b_non_spec = b.index_select(0, non_spec_token_indx)
+            else:
+                a_non_spec = a
+                b_non_spec = b
             core_attn_out_non_spec, last_recurrent_state = (
                 fused_sigmoid_gating_delta_rule_update(
                     A_log=self.A_log,
-                    a=a,
-                    b=b,
+                    a=a_non_spec,
+                    b=b_non_spec,
                     dt_bias=self.dt_bias,
                     q=query_non_spec,
                     k=key_non_spec,
@@ -984,6 +1027,19 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
                     use_qk_l2norm_in_kernel=True,
                 )
             )
+            if self.gdn_mgr is not None:
+                self.gdn_mgr.recurrent_step(
+                    S_prev=initial_state_for_telem,
+                    k=key_non_spec.detach(),
+                    v=value_non_spec.detach(),
+                    S_new_hw=last_recurrent_state.detach(),
+                    A_log=self.A_log.detach(),
+                    a=a_non_spec.detach(),
+                    b=b_non_spec.detach(),
+                    dt_bias=self.dt_bias.detach(),
+                    cu_seqlens=non_spec_query_start_loc.detach(),
+                    use_qk_l2norm_in_kernel=True,
+                )
         else:
             core_attn_out_non_spec, last_recurrent_state = None, None
 
@@ -1036,6 +1092,10 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
             conv_state_indices=non_spec_state_indices_tensor[:num_actual_tokens],
             validate_data=False,
         )
+        _, key_non_spec, value_non_spec = self.rearrange_mixed_qkv(mixed_qkv_non_spec)
+        initial_state_for_telem = ssm_state[
+            non_spec_state_indices_tensor[:num_actual_tokens]
+        ].contiguous().clone()
         out_buf = core_attn_out[:num_actual_tokens].unsqueeze(1)
         fused_recurrent_gated_delta_rule_packed_decode(
             mixed_qkv=mixed_qkv_non_spec,
@@ -1049,6 +1109,27 @@ class Qwen3NextGatedDeltaNet(nn.Module, MambaBase):
             ssm_state_indices=non_spec_state_indices_tensor[:num_actual_tokens],
             use_qk_l2norm_in_kernel=True,
         )
+        if self.gdn_mgr is not None:
+            packed_cu_seqlens = torch.arange(
+                0,
+                num_actual_tokens + 1,
+                device=non_spec_state_indices_tensor.device,
+                dtype=torch.long,
+            )
+            self.gdn_mgr.recurrent_step(
+                S_prev=initial_state_for_telem,
+                k=key_non_spec.detach(),
+                v=value_non_spec.detach(),
+                S_new_hw=ssm_state[
+                    non_spec_state_indices_tensor[:num_actual_tokens]
+                ].detach(),
+                A_log=self.A_log.detach(),
+                a=a.detach(),
+                b=b.detach(),
+                dt_bias=self.dt_bias.detach(),
+                cu_seqlens=packed_cu_seqlens,
+                use_qk_l2norm_in_kernel=True,
+            )
         return
 
 
@@ -1192,6 +1273,7 @@ class Qwen3NextDecoderLayer(nn.Module):
                 config,
                 model_config=model_config,
                 cache_config=cache_config,
+                max_num_seqs=vllm_config.scheduler_config.max_num_seqs,
                 quant_config=quant_config,
                 speculative_config=speculative_config,
                 prefix=f"{prefix}.linear_attn",

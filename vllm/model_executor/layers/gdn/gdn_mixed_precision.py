@@ -37,17 +37,21 @@ Usage in worker
 
 from __future__ import annotations
 
-import ctypes
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Literal, Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn.functional as F
+from vllm.utils.torch_utils import direct_register_custom_op
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+if not logger.handlers and not logging.getLogger().handlers:
+    logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
 # ---------------------------------------------------------------------------
 # Telemetry dataclass (mirrors GdnStateTelemetry in the C++ header)
@@ -236,6 +240,21 @@ except ImportError:
     pass
 
 
+def _triton_matmul_wrapper(
+    hidden: torch.Tensor,
+    W_out_T: torch.Tensor,
+) -> torch.Tensor:
+    import triton.ops  # type: ignore
+    return triton.ops.matmul(hidden, W_out_T)
+
+
+direct_register_custom_op(
+    op_name="gdn_triton_matmul",
+    op_func=_triton_matmul_wrapper,
+    mutates_args=[],
+)
+
+
 def _maybe_triton_output_proj(
     hidden: torch.Tensor,           # [batch, hidden_dim]
     W_out: torch.Tensor,            # [vocab_size, hidden_dim]  or [out_dim, hidden_dim]
@@ -247,10 +266,11 @@ def _maybe_triton_output_proj(
     Otherwise falls through to torch.matmul (which may itself use cuBLAS/CUTLASS).
     """
     if use_triton and _TRITON_AVAILABLE:
-        # triton.ops.matmul is a drop-in for torch.mm with custom tiling
         try:
-            return triton.ops.matmul(hidden, W_out.T)  # type: ignore
-        except Exception:
+            # Use the registered custom op for CUDA Graph safety
+            return torch.ops.vllm.gdn_triton_matmul(hidden, W_out.T)
+        except Exception as e:
+            logger.warning(f"Triton matmul failed: {e}. Falling back to torch.")
             pass  # silent fallback
 
     return F.linear(hidden, W_out)
@@ -395,6 +415,97 @@ class GdnMixedPrecisionManager:
 
         return S_out
 
+    def recurrent_step(
+        self,
+        S_prev: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        S_new_hw: torch.Tensor,
+        *,
+        g: torch.Tensor | None = None,
+        beta: torch.Tensor | None = None,
+        A_log: torch.Tensor | None = None,
+        a: torch.Tensor | None = None,
+        b: torch.Tensor | None = None,
+        dt_bias: torch.Tensor | None = None,
+        cu_seqlens: torch.Tensor | None = None,
+        use_qk_l2norm_in_kernel: bool = True,
+    ) -> None:
+        """
+        Telemetry-only recurrent state validator for the live GDN update path.
+        Compares the hardware-produced recurrent state against a float32
+        reference computed from the same tensors already available in _forward_core.
+        """
+        t0 = time.perf_counter()
+        self._step += 1
+
+        capture_telem = (
+            self.telemetry_every > 0
+            and self._step % self.telemetry_every == 0
+        )
+        if not capture_telem:
+            return
+
+        if g is None or beta is None:
+            if A_log is None or a is None or b is None or dt_bias is None:
+                raise ValueError(
+                    "recurrent_step requires either g/beta or A_log/a/b/dt_bias."
+                )
+            g, beta = self._derive_recurrent_gates(A_log, a, b, dt_bias)
+
+        S_ref = self._reference_recurrent_final_state(
+            S_prev=S_prev,
+            k=k,
+            v=v,
+            g=g,
+            beta=beta,
+            cu_seqlens=cu_seqlens,
+            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
+        )
+
+        S_hw = S_new_hw.float()
+        abs_err = (S_hw - S_ref).abs()
+        rel_err = abs_err / (S_ref.abs() + 1e-8)
+        signal_pw = (S_ref ** 2).sum().item()
+        noise_pw = (abs_err ** 2).sum().item()
+
+        if noise_pw <= 1e-30:
+            sqnr_db = 99.0
+        elif signal_pw <= 1e-30:
+            sqnr_db = float("nan")
+        else:
+            sqnr_db = 10.0 * torch.log10(
+                torch.tensor(signal_pw / noise_pw, device=S_ref.device)
+            ).item()
+
+        max_val = 3.4e38 if self.state_mode == "bf16" else 57344.0
+        pct_clipped = 100.0 * (S_hw.abs() >= max_val).sum().item() / S_hw.numel()
+        wall_ms = (time.perf_counter() - t0) * 1e3
+
+        record = GdnTelemetryRecord(
+            step=self._step,
+            mode=f"recurrent-{self.state_mode}",
+            max_abs_err=abs_err.max().item(),
+            mean_rel_err=rel_err.mean().item(),
+            pct_clipped=pct_clipped,
+            sqnr_db=sqnr_db,
+            n_nan=int(S_hw.isnan().sum().item()),
+            n_inf=int(S_hw.isinf().sum().item()),
+            total_elements=int(S_hw.numel()),
+            wall_ms=wall_ms,
+        )
+        self._history.append(record)
+        logger.info(str(record))
+
+        if not record.is_healthy(self.sqnr_floor_db):
+            logger.error(
+                f"GDN SQNR ALERT at step {self._step}: "
+                f"SQNR={record.sqnr_db:.2f} dB < floor {self.sqnr_floor_db} dB  "
+                f"NaN={record.n_nan}  Inf={record.n_inf}  "
+                f"clipped={record.pct_clipped:.2f}%"
+            )
+            raise GdnSqnrAlertError(record)
+
     # ------------------------------------------------------------------
     # Public: output projection dispatch (Triton bypass hook)
     # ------------------------------------------------------------------
@@ -533,6 +644,82 @@ class GdnMixedPrecisionManager:
             "n_inf":          int(t[5].item()),
             "total_elements": int(t[6].item()),
         }
+
+    def _derive_recurrent_gates(
+        self,
+        A_log: torch.Tensor,
+        a: torch.Tensor,
+        b: torch.Tensor,
+        dt_bias: torch.Tensor,
+        beta_value: float = 1.0,
+        threshold: float = 20.0,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        x = a.float() + dt_bias.float().view(1, -1)
+        softplus_x = torch.where(
+            beta_value * x <= threshold,
+            (1.0 / beta_value) * torch.log1p(torch.exp(beta_value * x)),
+            x,
+        )
+        g = -torch.exp(A_log.float()).view(1, -1) * softplus_x
+        beta = torch.sigmoid(b.float())
+        return g.unsqueeze(0), beta.unsqueeze(0)
+
+    def _reference_recurrent_final_state(
+        self,
+        *,
+        S_prev: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        g: torch.Tensor,
+        beta: torch.Tensor,
+        cu_seqlens: torch.Tensor | None,
+        use_qk_l2norm_in_kernel: bool,
+    ) -> torch.Tensor:
+        S = S_prev.float().clone()
+        k_f = k.float()
+        v_f = v.float()
+        g_f = g.float()
+        beta_f = beta.float()
+
+        if k_f.ndim == 3:
+            k_f = k_f.unsqueeze(0)
+        if v_f.ndim == 3:
+            v_f = v_f.unsqueeze(0)
+        if g_f.ndim == 2:
+            g_f = g_f.unsqueeze(0)
+        if beta_f.ndim == 2:
+            beta_f = beta_f.unsqueeze(0)
+
+        if use_qk_l2norm_in_kernel:
+            k_f = k_f * torch.rsqrt((k_f * k_f).sum(dim=-1, keepdim=True) + 1e-6)
+
+        _, total_tokens, H, K_dim = k_f.shape
+        _, _, HV, V_dim = v_f.shape
+        groups = HV // H
+
+        if cu_seqlens is None:
+            cu_seqlens = torch.arange(
+                0, S.shape[0] + 1, device=S.device, dtype=torch.long
+            )
+        else:
+            cu_seqlens = cu_seqlens.to(device=S.device, dtype=torch.long)
+
+        for seq_idx in range(S.shape[0]):
+            bos = int(cu_seqlens[seq_idx].item())
+            eos = int(cu_seqlens[seq_idx + 1].item())
+            state = S[seq_idx]
+            for tok in range(bos, eos):
+                k_tok = k_f[0, tok].repeat_interleave(groups, dim=0)
+                v_tok = v_f[0, tok]
+                g_tok = torch.exp(g_f[0, tok]).view(HV, 1, 1)
+                beta_tok = beta_f[0, tok].view(HV, 1)
+                state = state * g_tok
+                proj = torch.sum(state * k_tok[:, None, :], dim=-1)
+                delta_v = (v_tok - proj) * beta_tok
+                state = state + delta_v[:, :, None] * k_tok[:, None, :]
+            S[seq_idx] = state
+
+        return S
 
 
 # ---------------------------------------------------------------------------
