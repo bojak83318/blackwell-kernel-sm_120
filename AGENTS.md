@@ -111,3 +111,13 @@ Co-authored-by: Claude
 Co-authored-by: gemini-code-assist
 Signed-off-by: Your Name <your.email@example.com>
 ```
+
+---
+
+## 3. SM_120 Telemetry Rules (Blackwell)
+
+These rules are mandatory for recurrent delta-rule instrumentation in this codebase.
+
+- RULE: When instrumenting vLLM recurrent delta-rule updates on Blackwell, telemetry MUST be hooked inside `_forward_core` immediately after the state update returns, NOT in `forward()` or `output_projection()`.
+- RULE: Always `.clone()` input state tensors before passing them to Triton/fused updates if a software reference calculation is required later, due to in-place kernel mutations.
+- RULE: Treat high wall-time per step (for example ~0.9 ms at `seqs=8`) during eager-mode FP32 validation as an expected GIL/synchronization artifact, not an SM_120 hardware stall, provided NV-SMI shows idle/P8 states upon completion and the service is healthy.
