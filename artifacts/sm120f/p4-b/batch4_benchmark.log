@@ -1,0 +1,30 @@
+=== RUN 1 ===
+Request 1 -> Tokens: 128, Time: 23.38s, TPS: 5.47
+Request 2 -> Tokens: 128, Time: 23.38s, TPS: 5.47
+Request 3 -> Tokens: 128, Time: 23.39s, TPS: 5.47
+Request 4 -> Tokens: 128, Time: 23.38s, TPS: 5.47
+RUN_AVG_TPS_PER_USER=5.47
+RUN_MIN_TPS_PER_USER=5.47
+RUN_MAX_TPS_PER_USER=5.47
+RUN_PASS=False
+
+=== RUN 2 ===
+Request 1 -> Tokens: 128, Time: 1.09s, TPS: 117.91
+Request 2 -> Tokens: 128, Time: 1.09s, TPS: 117.91
+Request 3 -> Tokens: 128, Time: 1.09s, TPS: 117.38
+Request 4 -> Tokens: 128, Time: 1.09s, TPS: 117.92
+RUN_AVG_TPS_PER_USER=117.78
+RUN_MIN_TPS_PER_USER=117.38
+RUN_MAX_TPS_PER_USER=117.92
+RUN_PASS=True
+
+=== RUN 3 ===
+Request 1 -> Tokens: 128, Time: 0.98s, TPS: 130.33
+Request 2 -> Tokens: 128, Time: 0.98s, TPS: 130.29
+Request 3 -> Tokens: 128, Time: 0.98s, TPS: 130.33
+Request 4 -> Tokens: 128, Time: 0.98s, TPS: 130.34
+RUN_AVG_TPS_PER_USER=130.32
+RUN_MIN_TPS_PER_USER=130.29
+RUN_MAX_TPS_PER_USER=130.34
+RUN_PASS=True
+
