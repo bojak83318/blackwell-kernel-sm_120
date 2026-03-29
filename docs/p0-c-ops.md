@@ -3,7 +3,7 @@
 ## Environment assumptions
 - Local work runs inside `/home/rocm/workspace/blackwell-kernel-worktrees/sm_120-dev` with an existing CMake/Ninja build stack (confirm via `cmake --version` and `ninja --version`).
 - The repo already includes `docs/environment.md`, so this slice adds the actionable execution steps that reference the shared dependency matrix.
-- CUDA tooling is expected locally for non-kernel tasks, but the remote validation node (Ubuntu, NVIDIA GeForce RTX 5090) does **not** expose `cmake` or `nvcc` globally, so any CUDA/CUTLASS/host build must run inside a container that supplies the toolchain.
+- CUDA tooling is expected locally for non-kernel tasks, but the remote validation node (Ubuntu, NVIDIA GeForce RTX 5090) still does **not** expose `nvcc` globally, so any CUDA/CUTLASS/host build must run inside a container that supplies the CUDA toolchain. The host does expose `cmake`, `docker`, and `kubectl` globally.
 - Remote node services: Docker, `kubectl` (for the local k3s control plane), and hardware (RTX 5090) are present. All remote validation runs assume GPU access through Docker+NVIDIA Container Toolkit and Kubernetes operations through `kubectl` bound to the local `k3s` cluster.
 - Network access is limited to the agent tunnel; keep remote commands precise and idempotent to avoid repeated data transfer.
 
@@ -33,7 +33,7 @@
        nvcr.io/nvidia/pytorch:24.11-py3 \
        bash -lc 'cmake -S . -B build -DSM120_BUILD_TESTS=ON && cmake --build build'
      ```
-   - Ensure the chosen container supplies `cmake`, `ninja`, `cuda-compiler`, and the NVIDIA driver stack matching the RTX 5090.
+   - Ensure the chosen container supplies `nvcc` or `cuda-compiler` and the NVIDIA driver stack matching the RTX 5090. The host already provides `cmake`; keep `ninja` in the container if the image does not ship it.
    - Inside the container, run `nvidia-smi` to confirm the GPU is exposed before invoking CUTLASS/CUDA tasks.
 4. **Remote verification steps**
    - Use `ssh` to copy any generated artifacts back to the main workspace if further analysis is required, but prefer to store logs under `artifacts/remote/` within the repo tree.
