@@ -1,5 +1,19 @@
 # CUTLASS MoE SM120f Task Tracker
 
+## Stop: dual-repo workspace
+
+Before using this task tracker, read:
+
+- [`docs/architecture/repo_map.md`](docs/architecture/repo_map.md)
+- [`docs/architecture/operator_guide.md`](docs/architecture/operator_guide.md)
+This `TASK.md` applies to the top-level orchestration repo only. It does not describe the validated recurrent telemetry work parked in `vllm-sm120` on branch `sm120-gdn-validated-rc1`.
+
+Preferred remotes:
+
+- Repo A push target: `remote-orch`
+- Repo B push target: `remote-orch`
+- Repo B upstream sync target: `remote-vllm`
+
 ## Objective
 Track the PRD-driven work required to enable the `compute_120f` CUTLASS MoE FP4 TMA path for desktop Blackwell in vLLM, using `implementation.md` as the execution order and acceptance gate.
 
@@ -44,10 +58,10 @@ Track the PRD-driven work required to enable the `compute_120f` CUTLASS MoE FP4 
 - [x] `compute_120f` capability detection is merged and tested on RTX 5090 with CUDA 13.0+.
 - [x] MoE FP4 expert GEMM dispatches to `cutlass_moe_fp4_sm120f_tma` when available.
 - [x] Throughput is `>=39 tok/s` single-user for Qwen 3.5 35B-A3B NVFP4 at batch 1, 8k context.
-- [ ] Throughput is `>=18.2 tok/s/user` at batch 4.
+- [x] Throughput is `>=18.2 tok/s/user` at batch 4.
 - [x] The `compute_120a` fallback path is stable on CUDA 12.8.
 - [x] Numerics show zero divergence versus FP32 after 100k tokens.
-- [ ] The full target matrix passes on RTX 5090, RTX 5080, and RTX 5070 Ti with CUDA 13.0+.
+- [ ] The full target matrix passes on RTX 5090, RTX 5080, and RTX 5070 Ti with CUDA 13.0+. (blocker: RTX 5080 and RTX 5070 Ti hardware not currently accessible in this workspace; see `artifacts/sm120f/p4/matrix_status.md`.)
 - [x] MoE CI remains green within the targeted `<60s` runtime budget.
 - [x] Deployment guidance is published with CUDA 13.0+ requirements and fallback instructions.
 - [x] No regressions are observed on A100, H100, or L40S.
