@@ -1,0 +1,4 @@
+INFO 03-29 09:39:58 [gdn_mixed_precision.py:112] gdn_state_update_ext CUDA extension loaded.
+EXT_NAME=gdn_state_update_ext
+HAS_SM120=True
+HAS_SM120_GDN=False

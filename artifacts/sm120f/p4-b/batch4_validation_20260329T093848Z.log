@@ -1,0 +1,41 @@
+LOCAL_COMMAND: ssh ubuntu@192.168.0.233 'bash -s' <<'REMOTE'
+REMOTE_COMMAND: nohup python -m vllm.entrypoints.openai.api_server --model /home/ubuntu/labs/sglang_nvfp4_gdn/models/qwen35_nvfp4 --trust-remote-code --dtype bfloat16 --language-model-only --max-model-len 512 --max-num-batched-tokens 1024 --max-num-seqs 4 --enable-chunked-prefill --kv-cache-dtype fp8 --gdn-prefill-backend triton --gpu-memory-utilization 0.85 --port 18080 --served-model-name qwen35-nvfp4 > /home/ubuntu/labs/sglang_nvfp4_gdn/logs/p4b_validation_server.log 2>&1 &
+REMOTE_SERVER_PID=62772
+REMOTE_SERVER_READY=1
+=== RUN 1 ===
+Request 1 -> Tokens: 128, Time: 13.21s, TPS: 9.69
+Request 2 -> Tokens: 128, Time: 13.20s, TPS: 9.69
+Request 3 -> Tokens: 128, Time: 13.21s, TPS: 9.69
+Request 4 -> Tokens: 128, Time: 13.21s, TPS: 9.69
+RUN_AVG_TPS_PER_USER=9.69
+RUN_MIN_TPS_PER_USER=9.69
+RUN_MAX_TPS_PER_USER=9.69
+RUN_PASS=False
+
+=== RUN 2 ===
+Request 1 -> Tokens: 128, Time: 1.02s, TPS: 124.90
+Request 2 -> Tokens: 128, Time: 1.02s, TPS: 124.94
+Request 3 -> Tokens: 128, Time: 1.02s, TPS: 124.94
+Request 4 -> Tokens: 128, Time: 1.02s, TPS: 124.97
+RUN_AVG_TPS_PER_USER=124.94
+RUN_MIN_TPS_PER_USER=124.90
+RUN_MAX_TPS_PER_USER=124.97
+RUN_PASS=True
+
+=== RUN 3 ===
+Request 1 -> Tokens: 128, Time: 1.06s, TPS: 121.27
+Request 2 -> Tokens: 128, Time: 1.06s, TPS: 121.29
+Request 3 -> Tokens: 128, Time: 1.05s, TPS: 121.34
+Request 4 -> Tokens: 128, Time: 1.05s, TPS: 121.37
+RUN_AVG_TPS_PER_USER=121.32
+RUN_MIN_TPS_PER_USER=121.27
+RUN_MAX_TPS_PER_USER=121.37
+RUN_PASS=True
+
+OVERALL_MEAN_TPS_PER_USER=85.31
+OVERALL_MIN_TPS_PER_USER=9.69
+OVERALL_MAX_TPS_PER_USER=124.97
+STEADY_STATE_MEAN_TPS_PER_USER=123.13
+STEADY_STATE_PASS=True
+REMOTE_DISPATCH_GREP:
+bash: line 119: kill: (62772) - No such process
