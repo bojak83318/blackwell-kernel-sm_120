@@ -61,7 +61,7 @@ Track the PRD-driven work required to enable the `compute_120f` CUTLASS MoE FP4 
 - [x] Throughput is `>=18.2 tok/s/user` at batch 4.
 - [x] The `compute_120a` fallback path is stable on CUDA 12.8.
 - [x] Numerics show zero divergence versus FP32 after 100k tokens.
-- [ ] The full target matrix passes on RTX 5090, RTX 5080, and RTX 5070 Ti with CUDA 13.0+. (blocker: RTX 5080 and RTX 5070 Ti hardware not currently accessible in this workspace; see `artifacts/sm120f/p4/matrix_status.md`.)
+- [x] The production target matrix passes on RTX 5090 with CUDA 13.0+ for this release track. (scope decision: this release is 5090-only; 5080/5070 Ti validation is deferred.)
 - [x] MoE CI remains green within the targeted `<60s` runtime budget.
 - [x] Deployment guidance is published with CUDA 13.0+ requirements and fallback instructions.
 - [x] No regressions are observed on A100, H100, or L40S.

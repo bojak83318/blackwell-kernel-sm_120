@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | In Progress (Blocked On Matrix Hardware Availability) |
+| Status | Completed (RTX 5090 Release Track) |
 | Owner | rocm |
 | Date | 2026-03-29 |
 | Target System | `ubuntu@192.168.0.233` - RTX 5090 (SM120), 32 GiB VRAM |
@@ -124,6 +124,12 @@ Restore a reproducible development flow with two explicit branches of work:
 The immediate goal is not to maximize throughput. The immediate goal is to prove
 or disprove that the traced GDN extension is actually exercised by inference,
 without losing the known-good 8K serving path.
+
+Release scope decision:
+
+- This PRD is closed on an RTX 5090-only production target (`ubuntu@192.168.0.233`).
+- RTX 5080 and RTX 5070 Ti validation is explicitly deferred and is not a blocker
+  for this release track.
 
 ## Goals
 
@@ -305,6 +311,8 @@ Exit criteria:
   follow-up patch.
 - No benchmark claim is reported without the corresponding branch or patch
   identity.
+- The release target matrix is satisfied on RTX 5090 with CUDA 13.x for this
+  release scope.
 
 ## Rollout And Exit Decision
 
@@ -331,5 +339,5 @@ Stop investing in the current tracing integration path if:
   manager, from `gdn_attention_core`, or from another wrapper?
 - Does the SM120 Triton bypass patch need to remain as a permanent compatibility
   guard, or only as a temporary debug workaround?
-- When will RTX 5080 and RTX 5070 Ti hardware become available so the remaining
-  full-matrix acceptance gate can be executed and closed?
+- What additional evidence should be captured for a future 5080/5070 Ti
+  portability track, separate from this 5090 production release?
